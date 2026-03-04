@@ -8,16 +8,203 @@ import {
   CheckCircle, Clock, X, Menu, Minus, CreditCard, Banknote,
   Smartphone, Receipt, DollarSign, XCircle, Calculator,
   RefreshCw, Printer, Settings, Save, Store, Phone, Mail,
-  Globe, Palette, Percent
+  Globe, Palette, Percent, LogOut, User, Lock, UserPlus,
+  Shield, Monitor, Tablet, Wifi
 } from 'lucide-react';
 import './App.css';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
+// Auth Context
+const AuthContext = createContext(null);
+const useAuth = () => useContext(AuthContext);
+
 // Settings Context
 const SettingsContext = createContext(null);
-
 const useSettings = () => useContext(SettingsContext);
+
+// Configure axios interceptor for auth
+const setupAxiosInterceptors = (token) => {
+  if (token) {
+    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  } else {
+    delete axios.defaults.headers.common['Authorization'];
+  }
+};
+
+// ==================== LOGIN PAGE ====================
+const LoginPage = ({ onLogin, settings }) => {
+  const [isRegister, setIsRegister] = useState(false);
+  const [formData, setFormData] = useState({
+    nom: '',
+    email: '',
+    mot_de_passe: '',
+    confirmPassword: ''
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [showFirstUser, setShowFirstUser] = useState(false);
+
+  useEffect(() => {
+    checkFirstUser();
+  }, []);
+
+  const checkFirstUser = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/api/users/count`);
+      setShowFirstUser(res.data.count === 0);
+      if (res.data.count === 0) {
+        setIsRegister(true);
+      }
+    } catch (error) {
+      // Endpoint might not exist, default to login
+      setShowFirstUser(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+
+    try {
+      if (isRegister) {
+        if (formData.mot_de_passe !== formData.confirmPassword) {
+          toast.error('Les mots de passe ne correspondent pas');
+          setIsLoading(false);
+          return;
+        }
+        
+        await axios.post(`${API_URL}/api/auth/register`, {
+          nom: formData.nom,
+          email: formData.email,
+          mot_de_passe: formData.mot_de_passe
+        });
+        toast.success('Compte créé ! Connectez-vous maintenant.');
+        setIsRegister(false);
+        setFormData({ ...formData, nom: '', confirmPassword: '' });
+      } else {
+        const res = await axios.post(`${API_URL}/api/auth/login`, {
+          email: formData.email,
+          mot_de_passe: formData.mot_de_passe
+        });
+        
+        localStorage.setItem('token', res.data.token);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        setupAxiosInterceptors(res.data.token);
+        onLogin(res.data.user, res.data.token);
+        toast.success(`Bienvenue, ${res.data.user.nom} !`);
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur de connexion');
+    }
+    setIsLoading(false);
+  };
+
+  return (
+    <div className="login-page">
+      <div className="login-container">
+        <div className="login-header">
+          <h1 className="login-logo">{settings?.nom_boutique || 'FaraLink'}</h1>
+          <p className="login-subtitle">Point de Vente</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="login-form">
+          <h2>{isRegister ? 'Créer un compte' : 'Connexion'}</h2>
+          
+          {showFirstUser && (
+            <div className="first-user-notice">
+              <Shield size={20} />
+              <span>Premier utilisateur = Administrateur</span>
+            </div>
+          )}
+
+          {isRegister && (
+            <div className="form-group">
+              <label><User size={16} /> Nom complet</label>
+              <input
+                type="text"
+                value={formData.nom}
+                onChange={(e) => setFormData({...formData, nom: e.target.value})}
+                required
+                placeholder="Votre nom"
+                data-testid="register-name-input"
+              />
+            </div>
+          )}
+
+          <div className="form-group">
+            <label><Mail size={16} /> Email</label>
+            <input
+              type="email"
+              value={formData.email}
+              onChange={(e) => setFormData({...formData, email: e.target.value})}
+              required
+              placeholder="votre@email.com"
+              data-testid="login-email-input"
+            />
+          </div>
+
+          <div className="form-group">
+            <label><Lock size={16} /> Mot de passe</label>
+            <input
+              type="password"
+              value={formData.mot_de_passe}
+              onChange={(e) => setFormData({...formData, mot_de_passe: e.target.value})}
+              required
+              placeholder="••••••••"
+              data-testid="login-password-input"
+            />
+          </div>
+
+          {isRegister && (
+            <div className="form-group">
+              <label><Lock size={16} /> Confirmer le mot de passe</label>
+              <input
+                type="password"
+                value={formData.confirmPassword}
+                onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
+                required
+                placeholder="••••••••"
+                data-testid="register-confirm-input"
+              />
+            </div>
+          )}
+
+          <button type="submit" className="btn btn-primary btn-large btn-full" disabled={isLoading} data-testid="login-submit-btn">
+            {isLoading ? 'Chargement...' : (isRegister ? 'Créer le compte' : 'Se connecter')}
+          </button>
+
+          {!showFirstUser && (
+            <p className="login-switch">
+              {isRegister ? 'Déjà un compte ?' : 'Pas encore de compte ?'}
+              <button type="button" onClick={() => setIsRegister(!isRegister)}>
+                {isRegister ? 'Se connecter' : 'Créer un compte'}
+              </button>
+            </p>
+          )}
+        </form>
+
+        <div className="login-features">
+          <div className="feature">
+            <Monitor size={20} />
+            <span>PC</span>
+          </div>
+          <div className="feature">
+            <Tablet size={20} />
+            <span>Tablette</span>
+          </div>
+          <div className="feature">
+            <Smartphone size={20} />
+            <span>Mobile</span>
+          </div>
+          <div className="feature">
+            <Wifi size={20} />
+            <span>Synchronisé</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // Format currency with settings
 const formatCurrency = (amount, devise = 'FCFA') => {
@@ -52,20 +239,35 @@ const formatDateTime = (dateString) => {
 };
 
 // ==================== SIDEBAR ====================
-const Sidebar = ({ activeModule, setActiveModule, isMobileMenuOpen, setIsMobileMenuOpen }) => {
+const Sidebar = ({ activeModule, setActiveModule, isMobileMenuOpen, setIsMobileMenuOpen, onLogout }) => {
   const settings = useSettings();
+  const auth = useAuth();
   
   const menuItems = [
-    { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard },
-    { id: 'pos', label: 'Point de Vente', icon: ShoppingCart },
-    { id: 'products', label: 'Produits', icon: Package },
-    { id: 'clients', label: 'Clients', icon: Users },
-    { id: 'suppliers', label: 'Fournisseurs', icon: Truck },
-    { id: 'stock', label: 'Stock', icon: Warehouse },
-    { id: 'inventory', label: 'Inventaires', icon: ClipboardList },
-    { id: 'reports', label: 'Rapports', icon: BarChart3 },
-    { id: 'settings', label: 'Paramètres', icon: Settings },
+    { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard, roles: ['admin', 'gestionnaire', 'caissier'] },
+    { id: 'pos', label: 'Point de Vente', icon: ShoppingCart, roles: ['admin', 'gestionnaire', 'caissier'] },
+    { id: 'products', label: 'Produits', icon: Package, roles: ['admin', 'gestionnaire'] },
+    { id: 'clients', label: 'Clients', icon: Users, roles: ['admin', 'gestionnaire', 'caissier'] },
+    { id: 'suppliers', label: 'Fournisseurs', icon: Truck, roles: ['admin', 'gestionnaire'] },
+    { id: 'stock', label: 'Stock', icon: Warehouse, roles: ['admin', 'gestionnaire'] },
+    { id: 'inventory', label: 'Inventaires', icon: ClipboardList, roles: ['admin', 'gestionnaire'] },
+    { id: 'reports', label: 'Rapports', icon: BarChart3, roles: ['admin', 'gestionnaire'] },
+    { id: 'users', label: 'Utilisateurs', icon: UserPlus, roles: ['admin'] },
+    { id: 'settings', label: 'Paramètres', icon: Settings, roles: ['admin'] },
   ];
+
+  const filteredMenuItems = menuItems.filter(item => 
+    item.roles.includes(auth?.user?.role || 'caissier')
+  );
+
+  const getRoleBadge = (role) => {
+    const badges = {
+      admin: { label: 'Admin', class: 'role-admin' },
+      gestionnaire: { label: 'Gestionnaire', class: 'role-manager' },
+      caissier: { label: 'Caissier', class: 'role-cashier' }
+    };
+    return badges[role] || badges.caissier;
+  };
 
   return (
     <aside className={`sidebar ${isMobileMenuOpen ? 'open' : ''}`}>
@@ -73,8 +275,23 @@ const Sidebar = ({ activeModule, setActiveModule, isMobileMenuOpen, setIsMobileM
         <h1 className="logo">{settings?.nom_boutique || 'FaraLink'}</h1>
         <span className="logo-subtitle">Point de Vente</span>
       </div>
+      
+      {auth?.user && (
+        <div className="sidebar-user">
+          <div className="user-avatar">
+            <User size={20} />
+          </div>
+          <div className="user-info">
+            <span className="user-name">{auth.user.nom}</span>
+            <span className={`user-role ${getRoleBadge(auth.user.role).class}`}>
+              {getRoleBadge(auth.user.role).label}
+            </span>
+          </div>
+        </div>
+      )}
+      
       <nav className="sidebar-nav">
-        {menuItems.map(item => (
+        {filteredMenuItems.map(item => (
           <button
             key={item.id}
             data-testid={`nav-${item.id}`}
@@ -89,8 +306,13 @@ const Sidebar = ({ activeModule, setActiveModule, isMobileMenuOpen, setIsMobileM
           </button>
         ))}
       </nav>
+      
       <div className="sidebar-footer">
-        <span>Devise: {settings?.devise || 'FCFA'}</span>
+        <span className="devise-label">Devise: {settings?.devise || 'FCFA'}</span>
+        <button className="btn-logout" onClick={onLogout} data-testid="logout-btn">
+          <LogOut size={18} />
+          <span>Déconnexion</span>
+        </button>
       </div>
     </aside>
   );
@@ -1739,6 +1961,239 @@ const ReportsModule = () => {
   );
 };
 
+// ==================== USERS MODULE ====================
+const UsersModule = () => {
+  const [users, setUsers] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [formData, setFormData] = useState({
+    nom: '', email: '', mot_de_passe: '', role: 'caissier', telephone: ''
+  });
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/api/users`);
+      setUsers(res.data);
+    } catch (error) {
+      toast.error('Erreur lors du chargement des utilisateurs');
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (editingUser) {
+        const updateData = { ...formData };
+        if (!updateData.mot_de_passe) delete updateData.mot_de_passe;
+        await axios.put(`${API_URL}/api/users/${editingUser.id}`, updateData);
+        toast.success('Utilisateur modifié');
+      } else {
+        await axios.post(`${API_URL}/api/users`, formData);
+        toast.success('Utilisateur créé');
+      }
+      setShowModal(false);
+      resetForm();
+      fetchUsers();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur');
+    }
+  };
+
+  const handleEdit = (user) => {
+    setEditingUser(user);
+    setFormData({
+      nom: user.nom,
+      email: user.email,
+      mot_de_passe: '',
+      role: user.role,
+      telephone: user.telephone || ''
+    });
+    setShowModal(true);
+  };
+
+  const handleDelete = async (userId) => {
+    if (!window.confirm('Désactiver cet utilisateur ?')) return;
+    try {
+      await axios.delete(`${API_URL}/api/users/${userId}`);
+      toast.success('Utilisateur désactivé');
+      fetchUsers();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur');
+    }
+  };
+
+  const resetForm = () => {
+    setEditingUser(null);
+    setFormData({ nom: '', email: '', mot_de_passe: '', role: 'caissier', telephone: '' });
+  };
+
+  const getRoleBadge = (role) => {
+    const badges = {
+      admin: { label: 'Administrateur', class: 'role-admin' },
+      gestionnaire: { label: 'Gestionnaire', class: 'role-manager' },
+      caissier: { label: 'Caissier', class: 'role-cashier' }
+    };
+    return badges[role] || badges.caissier;
+  };
+
+  return (
+    <div className="module" data-testid="users-module">
+      <div className="module-header">
+        <h2 className="page-title">Gestion des Utilisateurs</h2>
+        <button className="btn btn-primary" onClick={() => { resetForm(); setShowModal(true); }} data-testid="add-user-btn">
+          <UserPlus size={18} /> Nouvel Utilisateur
+        </button>
+      </div>
+
+      <div className="users-info-cards">
+        <div className="info-card">
+          <Shield size={24} />
+          <div>
+            <h4>Synchronisation</h4>
+            <p>Les données sont synchronisées en temps réel sur tous les appareils connectés.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="table-container">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Email</th>
+              <th>Rôle</th>
+              <th>Téléphone</th>
+              <th>Statut</th>
+              <th>Dernière connexion</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(user => (
+              <tr key={user.id} className={!user.actif ? 'inactive' : ''}>
+                <td><strong>{user.nom}</strong></td>
+                <td>{user.email}</td>
+                <td>
+                  <span className={`role-badge ${getRoleBadge(user.role).class}`}>
+                    {getRoleBadge(user.role).label}
+                  </span>
+                </td>
+                <td>{user.telephone || '-'}</td>
+                <td>
+                  <span className={`status-badge ${user.actif ? 'status-paid' : 'status-cancelled'}`}>
+                    {user.actif ? 'Actif' : 'Inactif'}
+                  </span>
+                </td>
+                <td>{user.last_login ? formatDateTime(user.last_login) : 'Jamais'}</td>
+                <td>
+                  <div className="action-buttons">
+                    <button className="btn-icon" onClick={() => handleEdit(user)} title="Modifier">
+                      <Edit size={16} />
+                    </button>
+                    {user.actif && (
+                      <button className="btn-icon danger" onClick={() => handleDelete(user.id)} title="Désactiver">
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {users.length === 0 && <p className="no-data">Aucun utilisateur</p>}
+      </div>
+
+      {showModal && (
+        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingUser ? 'Modifier l\'Utilisateur' : 'Nouvel Utilisateur'}</h3>
+              <button className="btn-close" onClick={() => setShowModal(false)}><X /></button>
+            </div>
+            <form onSubmit={handleSubmit} className="modal-form">
+              <div className="form-group">
+                <label>Nom complet *</label>
+                <input
+                  type="text"
+                  value={formData.nom}
+                  onChange={(e) => setFormData({...formData, nom: e.target.value})}
+                  required
+                  data-testid="user-name-input"
+                />
+              </div>
+              <div className="form-group">
+                <label>Email *</label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  required
+                  data-testid="user-email-input"
+                />
+              </div>
+              <div className="form-group">
+                <label>{editingUser ? 'Nouveau mot de passe (laisser vide pour ne pas changer)' : 'Mot de passe *'}</label>
+                <input
+                  type="password"
+                  value={formData.mot_de_passe}
+                  onChange={(e) => setFormData({...formData, mot_de_passe: e.target.value})}
+                  required={!editingUser}
+                  data-testid="user-password-input"
+                />
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Rôle *</label>
+                  <select
+                    value={formData.role}
+                    onChange={(e) => setFormData({...formData, role: e.target.value})}
+                    required
+                    data-testid="user-role-select"
+                  >
+                    <option value="caissier">Caissier</option>
+                    <option value="gestionnaire">Gestionnaire</option>
+                    <option value="admin">Administrateur</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Téléphone</label>
+                  <input
+                    type="tel"
+                    value={formData.telephone}
+                    onChange={(e) => setFormData({...formData, telephone: e.target.value})}
+                    data-testid="user-phone-input"
+                  />
+                </div>
+              </div>
+              
+              <div className="role-permissions">
+                <h4>Permissions par rôle :</h4>
+                <ul>
+                  <li><strong>Caissier :</strong> Point de vente, Clients</li>
+                  <li><strong>Gestionnaire :</strong> Tout sauf Utilisateurs et Paramètres</li>
+                  <li><strong>Administrateur :</strong> Accès complet</li>
+                </ul>
+              </div>
+              
+              <div className="modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Annuler</button>
+                <button type="submit" className="btn btn-primary" data-testid="user-submit-btn">
+                  {editingUser ? 'Modifier' : 'Créer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ==================== SETTINGS MODULE ====================
 const SettingsModule = ({ onSettingsUpdate }) => {
   const settings = useSettings();
@@ -1978,24 +2433,57 @@ function App() {
   const [activeModule, setActiveModule] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [settings, setSettings] = useState(null);
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    // Check for existing session
+    const storedToken = localStorage.getItem('token');
+    const storedUser = localStorage.getItem('user');
+    
+    if (storedToken && storedUser) {
+      setToken(storedToken);
+      setUser(JSON.parse(storedUser));
+      setupAxiosInterceptors(storedToken);
+      validateSession(storedToken);
+    } else {
+      setIsLoading(false);
+    }
+    
     fetchSettings();
   }, []);
+
+  const validateSession = async (storedToken) => {
+    try {
+      const res = await axios.get(`${API_URL}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${storedToken}` }
+      });
+      setUser(res.data);
+      localStorage.setItem('user', JSON.stringify(res.data));
+    } catch (error) {
+      // Session invalid, logout
+      handleLogout();
+    }
+    setIsLoading(false);
+  };
 
   const fetchSettings = async () => {
     try {
       const res = await axios.get(`${API_URL}/api/settings`);
       setSettings(res.data);
-      // Apply color theme
       if (res.data.couleur_principale) {
-        document.documentElement.style.setProperty('--primary', res.data.couleur_principale);
-        document.documentElement.style.setProperty('--primary-light', adjustColor(res.data.couleur_principale, 20));
-        document.documentElement.style.setProperty('--primary-dark', adjustColor(res.data.couleur_principale, -20));
+        applyColorTheme(res.data.couleur_principale);
       }
     } catch (error) {
       console.error('Error fetching settings');
     }
+  };
+
+  const applyColorTheme = (color) => {
+    document.documentElement.style.setProperty('--primary', color);
+    document.documentElement.style.setProperty('--primary-light', adjustColor(color, 20));
+    document.documentElement.style.setProperty('--primary-dark', adjustColor(color, -20));
   };
 
   const adjustColor = (color, amount) => {
@@ -2007,12 +2495,25 @@ function App() {
     return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
   };
 
+  const handleLogin = (userData, userToken) => {
+    setUser(userData);
+    setToken(userToken);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setupAxiosInterceptors(null);
+    setUser(null);
+    setToken(null);
+    setActiveModule('dashboard');
+    toast.success('Déconnexion réussie');
+  };
+
   const handleSettingsUpdate = (newSettings) => {
     setSettings(newSettings);
     if (newSettings.couleur_principale) {
-      document.documentElement.style.setProperty('--primary', newSettings.couleur_principale);
-      document.documentElement.style.setProperty('--primary-light', adjustColor(newSettings.couleur_principale, 20));
-      document.documentElement.style.setProperty('--primary-dark', adjustColor(newSettings.couleur_principale, -20));
+      applyColorTheme(newSettings.couleur_principale);
     }
   };
 
@@ -2026,21 +2527,49 @@ function App() {
       case 'stock': return <StockModule />;
       case 'inventory': return <InventoryModule />;
       case 'reports': return <ReportsModule />;
+      case 'users': return <UsersModule />;
       case 'settings': return <SettingsModule onSettingsUpdate={handleSettingsUpdate} />;
       default: return <Dashboard setActiveModule={setActiveModule} />;
     }
   };
 
-  return (
-    <SettingsContext.Provider value={settings}>
-      <div className="app">
-        <Toaster position="top-right" richColors />
-        <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} data-testid="mobile-menu-btn"><Menu /></button>
-        <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} isMobileMenuOpen={isMobileMenuOpen} setIsMobileMenuOpen={setIsMobileMenuOpen} />
-        <main className="main-content">{renderModule()}</main>
-        {isMobileMenuOpen && <div className="mobile-overlay" onClick={() => setIsMobileMenuOpen(false)} />}
+  if (isLoading) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-spinner"></div>
+        <p>Chargement...</p>
       </div>
-    </SettingsContext.Provider>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!user || !token) {
+    return (
+      <SettingsContext.Provider value={settings}>
+        <Toaster position="top-right" richColors />
+        <LoginPage onLogin={handleLogin} settings={settings} />
+      </SettingsContext.Provider>
+    );
+  }
+
+  return (
+    <AuthContext.Provider value={{ user, token }}>
+      <SettingsContext.Provider value={settings}>
+        <div className="app">
+          <Toaster position="top-right" richColors />
+          <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} data-testid="mobile-menu-btn"><Menu /></button>
+          <Sidebar 
+            activeModule={activeModule} 
+            setActiveModule={setActiveModule} 
+            isMobileMenuOpen={isMobileMenuOpen} 
+            setIsMobileMenuOpen={setIsMobileMenuOpen}
+            onLogout={handleLogout}
+          />
+          <main className="main-content">{renderModule()}</main>
+          {isMobileMenuOpen && <div className="mobile-overlay" onClick={() => setIsMobileMenuOpen(false)} />}
+        </div>
+      </SettingsContext.Provider>
+    </AuthContext.Provider>
   );
 }
 

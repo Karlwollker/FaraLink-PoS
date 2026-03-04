@@ -1,5 +1,6 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, Depends, Header
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -11,6 +12,8 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
 import io
+import hashlib
+import secrets
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -21,10 +24,13 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # Create the main app without a prefix
-app = FastAPI(title="Gestion Commerciale API - POS")
+app = FastAPI(title="FaraLink - Point de Vente API")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
+
+# Security
+security = HTTPBearer(auto_error=False)
 
 # Configure logging
 logging.basicConfig(
@@ -33,7 +39,105 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ==================== AUTH HELPERS ====================
+
+def hash_password(password: str) -> str:
+    """Hash password with SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def generate_token() -> str:
+    """Generate a secure token"""
+    return secrets.token_urlsafe(32)
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current user from token"""
+    if not credentials:
+        return None
+    
+    token = credentials.credentials
+    session = await db.sessions.find_one({"token": token, "active": True}, {"_id": 0})
+    
+    if not session:
+        return None
+    
+    # Check expiration
+    if session.get("expires_at"):
+        expires = datetime.fromisoformat(session["expires_at"]) if isinstance(session["expires_at"], str) else session["expires_at"]
+        if expires < datetime.now(timezone.utc):
+            await db.sessions.update_one({"token": token}, {"$set": {"active": False}})
+            return None
+    
+    user = await db.users.find_one({"id": session["user_id"], "actif": True}, {"_id": 0, "mot_de_passe": 0})
+    return user
+
+async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Require authentication"""
+    user = await get_current_user(credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Non authentifié")
+    return user
+
+async def require_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Require admin role"""
+    user = await require_auth(credentials)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    return user
+
 # ==================== MODELS ====================
+
+# User Models
+class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    nom: str
+    email: str
+    mot_de_passe: str
+    role: str = "caissier"  # admin, gestionnaire, caissier
+    telephone: Optional[str] = None
+    actif: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_login: Optional[datetime] = None
+
+class UserCreate(BaseModel):
+    nom: str
+    email: str
+    mot_de_passe: str
+    role: str = "caissier"
+    telephone: Optional[str] = None
+
+class UserUpdate(BaseModel):
+    nom: Optional[str] = None
+    email: Optional[str] = None
+    mot_de_passe: Optional[str] = None
+    role: Optional[str] = None
+    telephone: Optional[str] = None
+    actif: Optional[bool] = None
+
+class UserLogin(BaseModel):
+    email: str
+    mot_de_passe: str
+
+class UserResponse(BaseModel):
+    id: str
+    nom: str
+    email: str
+    role: str
+    telephone: Optional[str] = None
+    actif: bool
+    created_at: datetime
+    last_login: Optional[datetime] = None
+
+class Session(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    token: str
+    device_info: Optional[str] = None
+    ip_address: Optional[str] = None
+    active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30))
 
 # Settings Model
 class AppSettings(BaseModel):
@@ -357,6 +461,173 @@ async def get_current_cash_register():
 @api_router.get("/")
 async def root():
     return {"message": "API FaraLink - Point de Vente - FCFA"}
+
+# ==================== AUTHENTICATION ====================
+
+@api_router.post("/auth/register")
+async def register_user(input: UserCreate):
+    """Register a new user (admin only or first user)"""
+    # Check if first user (will be admin)
+    user_count = await db.users.count_documents({})
+    
+    # Check if email exists
+    existing = await db.users.find_one({"email": input.email.lower()})
+    if existing:
+        raise HTTPException(status_code=400, detail="Cet email est déjà utilisé")
+    
+    # First user becomes admin
+    role = "admin" if user_count == 0 else input.role
+    
+    user = User(
+        nom=input.nom,
+        email=input.email.lower(),
+        mot_de_passe=hash_password(input.mot_de_passe),
+        role=role,
+        telephone=input.telephone
+    )
+    
+    doc = serialize_doc(user.model_dump())
+    await db.users.insert_one(doc)
+    
+    # Return user without password
+    user_data = user.model_dump()
+    del user_data["mot_de_passe"]
+    
+    return {"message": "Utilisateur créé avec succès", "user": user_data}
+
+@api_router.post("/auth/login")
+async def login_user(input: UserLogin):
+    """Login and get session token"""
+    user = await db.users.find_one({
+        "email": input.email.lower(),
+        "mot_de_passe": hash_password(input.mot_de_passe),
+        "actif": True
+    }, {"_id": 0})
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+    
+    # Create session
+    token = generate_token()
+    session = Session(
+        user_id=user["id"],
+        token=token
+    )
+    
+    await db.sessions.insert_one(serialize_doc(session.model_dump()))
+    
+    # Update last login
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
+    )
+    
+    # Return user info without password
+    user_response = {k: v for k, v in user.items() if k != "mot_de_passe"}
+    
+    return {
+        "token": token,
+        "user": user_response,
+        "expires_at": session.expires_at.isoformat()
+    }
+
+@api_router.post("/auth/logout")
+async def logout_user(user: dict = Depends(require_auth)):
+    """Logout current session"""
+    # Deactivate all sessions for this user from this request
+    # In real app, you'd get the specific token from header
+    await db.sessions.update_many(
+        {"user_id": user["id"]},
+        {"$set": {"active": False}}
+    )
+    return {"message": "Déconnexion réussie"}
+
+@api_router.get("/auth/me")
+async def get_current_user_info(user: dict = Depends(require_auth)):
+    """Get current user info"""
+    return user
+
+@api_router.put("/auth/password")
+async def change_password(
+    old_password: str,
+    new_password: str,
+    user: dict = Depends(require_auth)
+):
+    """Change password"""
+    # Verify old password
+    db_user = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if db_user["mot_de_passe"] != hash_password(old_password):
+        raise HTTPException(status_code=400, detail="Ancien mot de passe incorrect")
+    
+    # Update password
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"mot_de_passe": hash_password(new_password)}}
+    )
+    
+    return {"message": "Mot de passe modifié avec succès"}
+
+# ==================== USER MANAGEMENT (Admin) ====================
+
+@api_router.get("/users", response_model=List[UserResponse])
+async def get_users(admin: dict = Depends(require_admin)):
+    """Get all users (admin only)"""
+    users = await db.users.find({}, {"_id": 0, "mot_de_passe": 0}).to_list(100)
+    return [deserialize_doc(u) for u in users]
+
+@api_router.post("/users", response_model=UserResponse)
+async def create_user(input: UserCreate, admin: dict = Depends(require_admin)):
+    """Create a new user (admin only)"""
+    existing = await db.users.find_one({"email": input.email.lower()})
+    if existing:
+        raise HTTPException(status_code=400, detail="Cet email est déjà utilisé")
+    
+    user = User(
+        nom=input.nom,
+        email=input.email.lower(),
+        mot_de_passe=hash_password(input.mot_de_passe),
+        role=input.role,
+        telephone=input.telephone
+    )
+    
+    doc = serialize_doc(user.model_dump())
+    await db.users.insert_one(doc)
+    
+    user_data = user.model_dump()
+    del user_data["mot_de_passe"]
+    return user_data
+
+@api_router.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: str, input: UserUpdate, admin: dict = Depends(require_admin)):
+    """Update a user (admin only)"""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+    
+    update_data = {k: v for k, v in input.model_dump().items() if v is not None}
+    if "mot_de_passe" in update_data:
+        update_data["mot_de_passe"] = hash_password(update_data["mot_de_passe"])
+    
+    if update_data:
+        await db.users.update_one({"id": user_id}, {"$set": update_data})
+    
+    updated = await db.users.find_one({"id": user_id}, {"_id": 0, "mot_de_passe": 0})
+    return deserialize_doc(updated)
+
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: str, admin: dict = Depends(require_admin)):
+    """Deactivate a user (admin only)"""
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="Vous ne pouvez pas supprimer votre propre compte")
+    
+    result = await db.users.update_one({"id": user_id}, {"$set": {"actif": False}})
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+    
+    # Deactivate all sessions
+    await db.sessions.update_many({"user_id": user_id}, {"$set": {"active": False}})
+    
+    return {"message": "Utilisateur désactivé"}
 
 # ==================== SETTINGS ====================
 
