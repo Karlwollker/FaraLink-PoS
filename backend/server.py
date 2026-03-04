@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query, Depends, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Query, Depends, Header, UploadFile, File
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 import io
 import hashlib
 import secrets
+import openpyxl
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -707,6 +708,167 @@ async def search_by_barcode(barcode: str):
         raise HTTPException(status_code=404, detail="Produit non trouvé")
     return deserialize_doc(product)
 
+@api_router.get("/products/categories/list")
+async def get_categories():
+    categories = await db.products.distinct("categorie")
+    custom_cats = await db.categories.find({}, {"_id": 0}).to_list(1000)
+    custom_names = [c["nom"] for c in custom_cats]
+    all_cats = list(set(categories + custom_names))
+    all_cats.sort()
+    return all_cats
+
+@api_router.post("/categories")
+async def create_category(data: dict):
+    nom = data.get("nom", "").strip()
+    if not nom:
+        raise HTTPException(status_code=400, detail="Le nom de la catégorie est requis")
+    existing = await db.categories.find_one({"nom": nom})
+    if existing:
+        raise HTTPException(status_code=400, detail="Cette catégorie existe déjà")
+    cat_doc = {"id": str(uuid.uuid4()), "nom": nom, "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.categories.insert_one(cat_doc)
+    return {"id": cat_doc["id"], "nom": nom}
+
+@api_router.delete("/categories/{cat_name}")
+async def delete_category(cat_name: str):
+    result = await db.categories.delete_one({"nom": cat_name})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Catégorie non trouvée")
+    return {"message": "Catégorie supprimée"}
+
+@api_router.post("/products/import-excel")
+async def import_products_from_excel(file: UploadFile = File(...)):
+    """Import products from an Excel file (.xlsx)"""
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Format de fichier invalide. Utilisez un fichier .xlsx")
+    
+    try:
+        contents = await file.read()
+        wb = openpyxl.load_workbook(io.BytesIO(contents))
+        ws = wb.active
+        
+        headers = []
+        for cell in ws[1]:
+            headers.append(str(cell.value or "").strip().lower())
+        
+        field_map = {
+            'code': ['code', 'code produit', 'ref', 'référence', 'reference'],
+            'designation': ['designation', 'désignation', 'nom', 'nom produit', 'produit', 'libellé', 'libelle', 'description'],
+            'categorie': ['categorie', 'catégorie', 'category', 'famille'],
+            'prix_achat': ['prix achat', 'prix_achat', 'pa', 'cout', 'coût', "prix d'achat"],
+            'prix_vente': ['prix vente', 'prix_vente', 'pv', 'prix de vente', 'prix'],
+            'quantite_stock': ['stock', 'quantite', 'quantité', 'quantite_stock', 'qte', 'qty'],
+            'stock_minimum': ['stock minimum', 'stock_minimum', 'stock min', 'seuil'],
+            'code_barre': ['code barre', 'code_barre', 'barcode', 'ean', 'code-barres'],
+            'unite': ['unite', 'unité', 'unit'],
+        }
+        
+        col_indices = {}
+        for field, possible_names in field_map.items():
+            for i, h in enumerate(headers):
+                if h in possible_names:
+                    col_indices[field] = i
+                    break
+        
+        if 'designation' not in col_indices:
+            raise HTTPException(status_code=400, detail="Colonne 'Désignation' ou 'Nom' non trouvée dans le fichier")
+        
+        imported = 0
+        skipped = 0
+        errors = []
+        
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            try:
+                designation = str(row[col_indices['designation']] or "").strip()
+                if not designation:
+                    skipped += 1
+                    continue
+                
+                code = str(row[col_indices.get('code', -1)] or "").strip() if 'code' in col_indices else ""
+                if not code:
+                    code = f"IMP{str(uuid.uuid4())[:8].upper()}"
+                
+                existing = await db.products.find_one({"code": code})
+                if existing:
+                    skipped += 1
+                    continue
+                
+                categorie = str(row[col_indices.get('categorie', -1)] or "").strip() if 'categorie' in col_indices else "Non classé"
+                if not categorie:
+                    categorie = "Non classé"
+                
+                def safe_float(val, default=0.0):
+                    try:
+                        return float(val) if val is not None else default
+                    except (ValueError, TypeError):
+                        return default
+                
+                def safe_int(val, default=0):
+                    try:
+                        return int(float(val)) if val is not None else default
+                    except (ValueError, TypeError):
+                        return default
+                
+                product = Product(
+                    code=code,
+                    code_barre=str(row[col_indices.get('code_barre', -1)] or "").strip() if 'code_barre' in col_indices else "",
+                    designation=designation,
+                    categorie=categorie,
+                    prix_achat=safe_float(row[col_indices.get('prix_achat', -1)]) if 'prix_achat' in col_indices else 0,
+                    prix_vente=safe_float(row[col_indices.get('prix_vente', -1)]) if 'prix_vente' in col_indices else 0,
+                    quantite_stock=safe_int(row[col_indices.get('quantite_stock', -1)]) if 'quantite_stock' in col_indices else 0,
+                    stock_minimum=safe_int(row[col_indices.get('stock_minimum', -1)], 10) if 'stock_minimum' in col_indices else 10,
+                    unite=str(row[col_indices.get('unite', -1)] or "Pièce").strip() if 'unite' in col_indices else "Pièce",
+                )
+                
+                doc = serialize_doc(product.model_dump())
+                await db.products.insert_one(doc)
+                imported += 1
+                
+            except Exception as e:
+                errors.append(f"Ligne {row_idx}: {str(e)}")
+                continue
+        
+        return {
+            "imported": imported,
+            "skipped": skipped,
+            "errors": errors[:10],
+            "message": f"{imported} produit(s) importé(s), {skipped} ignoré(s)"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erreur lors de la lecture du fichier: {str(e)}")
+
+@api_router.get("/products/import-template")
+async def get_import_template():
+    """Download an Excel template for product import"""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Produits"
+    
+    headers_list = ["Code", "Désignation", "Catégorie", "Prix Achat", "Prix Vente", "Stock", "Stock Minimum", "Code Barre", "Unité"]
+    for col, header in enumerate(headers_list, 1):
+        ws.cell(row=1, column=col, value=header)
+        ws.cell(row=1, column=col).font = openpyxl.styles.Font(bold=True)
+    
+    ws.append(["PROD001", "Exemple Produit", "Alimentation", 1000, 1500, 50, 10, "", "Pièce"])
+    
+    for col in ws.columns:
+        max_length = max(len(str(cell.value or "")) for cell in col)
+        ws.column_dimensions[col[0].column_letter].width = max_length + 4
+    
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=modele_import_produits.xlsx"}
+    )
+
 @api_router.get("/products/{product_id}", response_model=Product)
 async def get_product(product_id: str):
     product = await db.products.find_one({"id": product_id}, {"_id": 0})
@@ -734,11 +896,6 @@ async def delete_product(product_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Produit non trouvé")
     return {"message": "Produit supprimé"}
-
-@api_router.get("/products/categories/list")
-async def get_categories():
-    categories = await db.products.distinct("categorie")
-    return categories
 
 # ==================== CLIENTS ====================
 

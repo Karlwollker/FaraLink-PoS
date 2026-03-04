@@ -9,7 +9,7 @@ import {
   Smartphone, Receipt, DollarSign, XCircle, Calculator,
   RefreshCw, Printer, Settings, Save, Store, Phone, Mail,
   Globe, Palette, Percent, LogOut, User, Lock, UserPlus,
-  Shield, Monitor, Tablet, Wifi
+  Shield, Monitor, Tablet, Wifi, Upload, Tag, FileSpreadsheet
 } from 'lucide-react';
 import './App.css';
 
@@ -1219,6 +1219,12 @@ const ProductsModule = () => {
   const [editingPriceId, setEditingPriceId] = useState(null);
   const [editingPriceField, setEditingPriceField] = useState(null);
   const [editPriceValue, setEditPriceValue] = useState('');
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
   const [formData, setFormData] = useState({
     code: '', code_barre: '', designation: '', categorie: '',
     prix_achat: '', prix_vente: '', quantite_stock: 0, stock_minimum: 10,
@@ -1359,11 +1365,70 @@ const ProductsModule = () => {
     window.open(`${API_URL}/api/export/products`, '_blank');
   };
 
+  const handleImportExcel = async () => {
+    if (!importFile) {
+      toast.error('Sélectionnez un fichier Excel');
+      return;
+    }
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const formDataUpload = new FormData();
+      formDataUpload.append('file', importFile);
+      const res = await axios.post(`${API_URL}/api/products/import-excel`, formDataUpload, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setImportResult(res.data);
+      toast.success(res.data.message);
+      fetchProducts();
+      fetchCategories();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur lors de l\'import');
+    }
+    setImporting(false);
+  };
+
+  const downloadTemplate = () => {
+    window.open(`${API_URL}/api/products/import-template`, '_blank');
+  };
+
+  const addCategory = async () => {
+    if (!newCategoryName.trim()) {
+      toast.error('Entrez le nom de la catégorie');
+      return;
+    }
+    try {
+      await axios.post(`${API_URL}/api/categories`, { nom: newCategoryName.trim() });
+      toast.success('Catégorie créée');
+      setNewCategoryName('');
+      fetchCategories();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur');
+    }
+  };
+
+  const deleteCategory = async (catName) => {
+    if (!window.confirm(`Supprimer la catégorie "${catName}" ?`)) return;
+    try {
+      await axios.delete(`${API_URL}/api/categories/${encodeURIComponent(catName)}`);
+      toast.success('Catégorie supprimée');
+      fetchCategories();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur');
+    }
+  };
+
   return (
     <div className="module" data-testid="products-module">
       <div className="module-header">
         <h2 className="page-title">Gestion des Produits</h2>
         <div className="header-actions">
+          <button className="btn btn-secondary" onClick={() => setShowCategoryModal(true)} data-testid="manage-categories-btn">
+            <Tag size={18} /> Catégories
+          </button>
+          <button className="btn btn-secondary" onClick={() => { setShowImportModal(true); setImportFile(null); setImportResult(null); }} data-testid="import-products-btn">
+            <Upload size={18} /> Importer
+          </button>
           <button className="btn btn-secondary" onClick={exportProducts} data-testid="export-products-btn">
             <Download size={18} /> Exporter
           </button>
@@ -1512,10 +1577,12 @@ const ProductsModule = () => {
               <div className="form-row">
                 <div className="form-group">
                   <label>Catégorie *</label>
-                  <input type="text" value={formData.categorie} onChange={(e) => setFormData({...formData, categorie: e.target.value})} required list="categories-list" data-testid="product-category-input" />
-                  <datalist id="categories-list">
-                    {categories.map(cat => <option key={cat} value={cat} />)}
-                  </datalist>
+                  <select value={formData.categorie} onChange={(e) => setFormData({...formData, categorie: e.target.value})} required data-testid="product-category-input">
+                    <option value="">-- Sélectionner --</option>
+                    {categories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="form-group">
                   <label>Unité</label>
@@ -1555,6 +1622,122 @@ const ProductsModule = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Import Excel Modal */}
+      {showImportModal && (
+        <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><FileSpreadsheet size={20} /> Importer des Produits</h3>
+              <button className="btn-close" onClick={() => setShowImportModal(false)}><X /></button>
+            </div>
+            <div className="modal-form">
+              <div className="import-info">
+                <p>Importez vos produits depuis un fichier Excel (.xlsx).</p>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  Colonnes acceptées : Code, Désignation, Catégorie, Prix Achat, Prix Vente, Stock, Stock Minimum, Code Barre, Unité
+                </p>
+                <button className="btn btn-secondary" onClick={downloadTemplate} style={{ marginTop: '8px' }} data-testid="download-template-btn">
+                  <Download size={16} /> Télécharger le modèle
+                </button>
+              </div>
+              <div className="form-group">
+                <label>Fichier Excel (.xlsx)</label>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={(e) => setImportFile(e.target.files[0])}
+                  className="file-input"
+                  data-testid="import-file-input"
+                />
+              </div>
+              {importFile && (
+                <div className="import-file-info">
+                  <FileSpreadsheet size={16} />
+                  <span>{importFile.name}</span>
+                </div>
+              )}
+              {importResult && (
+                <div className="import-result">
+                  <div className="import-result-row success">
+                    <CheckCircle size={16} /> {importResult.imported} produit(s) importé(s)
+                  </div>
+                  {importResult.skipped > 0 && (
+                    <div className="import-result-row warning">
+                      <AlertTriangle size={16} /> {importResult.skipped} ignoré(s) (doublons ou vides)
+                    </div>
+                  )}
+                  {importResult.errors?.length > 0 && (
+                    <div className="import-result-row danger">
+                      <XCircle size={16} /> {importResult.errors.length} erreur(s)
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-actions">
+                <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>Fermer</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleImportExcel}
+                  disabled={!importFile || importing}
+                  data-testid="confirm-import-btn"
+                >
+                  {importing ? <><RefreshCw size={16} className="spin" /> Import en cours...</> : <><Upload size={16} /> Importer</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Categories Management Modal */}
+      {showCategoryModal && (
+        <div className="modal-overlay" onClick={() => setShowCategoryModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><Tag size={20} /> Gestion des Catégories</h3>
+              <button className="btn-close" onClick={() => setShowCategoryModal(false)}><X /></button>
+            </div>
+            <div className="modal-form">
+              <div className="category-add-row">
+                <input
+                  type="text"
+                  placeholder="Nom de la nouvelle catégorie"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCategory(); }}}
+                  data-testid="new-category-input"
+                />
+                <button className="btn btn-primary" onClick={addCategory} data-testid="add-category-btn">
+                  <Plus size={16} /> Ajouter
+                </button>
+              </div>
+              <div className="categories-list">
+                {categories.length === 0 ? (
+                  <p className="no-data">Aucune catégorie</p>
+                ) : (
+                  categories.map(cat => (
+                    <div key={cat} className="category-item" data-testid={`category-${cat}`}>
+                      <span className="category-name"><Tag size={14} /> {cat}</span>
+                      <button
+                        className="btn-icon danger small"
+                        onClick={() => deleteCategory(cat)}
+                        title="Supprimer"
+                        data-testid={`delete-category-${cat}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="modal-actions">
+                <button className="btn btn-secondary" onClick={() => setShowCategoryModal(false)}>Fermer</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
