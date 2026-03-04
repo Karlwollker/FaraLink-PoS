@@ -1725,6 +1725,13 @@ body {
   font-size: 0.85rem;
 }
 
+.receipt-footer .receipt-slogan {
+  font-size: 0.75rem;
+  font-style: italic;
+  margin-top: 4px;
+  color: #666;
+}
+
 .receipt-actions {
   display: flex;
   gap: 12px;

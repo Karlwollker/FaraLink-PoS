@@ -61,7 +61,7 @@ const Sidebar = ({ activeModule, setActiveModule, isMobileMenuOpen, setIsMobileM
   return (
     <aside className={`sidebar ${isMobileMenuOpen ? 'open' : ''}`}>
       <div className="sidebar-header">
-        <h1 className="logo">GestCom</h1>
+        <h1 className="logo">FaraLink</h1>
         <span className="logo-subtitle">Point de Vente</span>
       </div>
       <nav className="sidebar-nav">
@@ -695,8 +695,9 @@ const POSModule = () => {
           <div className="modal modal-receipt" onClick={e => e.stopPropagation()}>
             <div className="receipt">
               <div className="receipt-header">
-                <h2>GestCom</h2>
-                <p>Point de Vente</p>
+                <h2>FaraLink</h2>
+                <p>Akwa, Douala Cameroun</p>
+                <p>Tél: +237 699 397 286</p>
               </div>
               <div className="receipt-info">
                 <p><strong>Ticket:</strong> {lastSale.numero_ticket}</p>
@@ -728,7 +729,8 @@ const POSModule = () => {
                 </div>
               </div>
               <div className="receipt-footer">
-                <p>Merci de votre visite !</p>
+                <p>Merci pour votre achat !</p>
+                <p className="receipt-slogan">FaraLink - Votre partenaire de confiance</p>
               </div>
             </div>
             <div className="receipt-actions">
