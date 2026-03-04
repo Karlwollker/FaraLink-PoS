@@ -450,6 +450,11 @@ const POSModule = () => {
   const [amountReceived, setAmountReceived] = useState('');
   const [showReceipt, setShowReceipt] = useState(false);
   const [lastSale, setLastSale] = useState(null);
+  const [editingCartPrice, setEditingCartPrice] = useState(null);
+  const [editCartPriceValue, setEditCartPriceValue] = useState('');
+  const [showAddClientModal, setShowAddClientModal] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const [newClientPhone, setNewClientPhone] = useState('');
   const searchInputRef = useRef(null);
   
   const devise = settings?.devise || 'FCFA';
@@ -576,6 +581,54 @@ const POSModule = () => {
     setSelectedClient(null);
   };
 
+  const startEditCartPrice = (productId, currentPrice) => {
+    setEditingCartPrice(productId);
+    setEditCartPriceValue(String(currentPrice));
+  };
+
+  const saveCartPrice = (productId) => {
+    const newPrice = parseFloat(editCartPriceValue);
+    if (isNaN(newPrice) || newPrice <= 0) {
+      toast.error('Prix invalide');
+      return;
+    }
+    setCart(cart.map(item =>
+      item.product_id === productId ? { ...item, prix_unitaire: newPrice } : item
+    ));
+    setEditingCartPrice(null);
+    setEditCartPriceValue('');
+  };
+
+  const cancelEditCartPrice = () => {
+    setEditingCartPrice(null);
+    setEditCartPriceValue('');
+  };
+
+  const addQuickClient = async () => {
+    if (!newClientName.trim()) {
+      toast.error('Entrez le nom du client');
+      return;
+    }
+    try {
+      const res = await axios.post(`${API_URL}/api/clients`, {
+        code: `CLI${Date.now().toString().slice(-6)}`,
+        nom: newClientName.trim(),
+        telephone: newClientPhone.trim() || '',
+        email: '',
+        adresse: '',
+        ville: ''
+      });
+      toast.success('Client ajouté');
+      setClients([...clients, res.data]);
+      setSelectedClient(res.data);
+      setNewClientName('');
+      setNewClientPhone('');
+      setShowAddClientModal(false);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur lors de l\'ajout du client');
+    }
+  };
+
   const cartTotal = cart.reduce((sum, item) => sum + (item.prix_unitaire * item.quantite), 0);
   const cartTVA = tvaActive ? cartTotal * (tauxTva / 100) : 0;
   const cartTTC = cartTotal + cartTVA;
@@ -610,7 +663,8 @@ const POSModule = () => {
         client_id: selectedClient?.id || null,
         lignes: cart.map(item => ({
           product_id: item.product_id,
-          quantite: item.quantite
+          quantite: item.quantite,
+          prix_unitaire: item.prix_unitaire
         })),
         montant_recu: received || totalToPay,
         mode_paiement: paymentMethod
@@ -775,16 +829,26 @@ const POSModule = () => {
           </div>
 
           <div className="cart-client">
-            <select
-              value={selectedClient?.id || ''}
-              onChange={(e) => setSelectedClient(clients.find(c => c.id === e.target.value) || null)}
-              data-testid="client-select"
-            >
-              <option value="">Client Comptoir</option>
-              {clients.map(c => (
-                <option key={c.id} value={c.id}>{c.nom}</option>
-              ))}
-            </select>
+            <div className="cart-client-row">
+              <select
+                value={selectedClient?.id || ''}
+                onChange={(e) => setSelectedClient(clients.find(c => c.id === e.target.value) || null)}
+                data-testid="client-select"
+              >
+                <option value="">Client Comptoir</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>{c.nom}</option>
+                ))}
+              </select>
+              <button
+                className="btn-add-client"
+                onClick={() => setShowAddClientModal(true)}
+                title="Ajouter un client"
+                data-testid="add-client-pos-btn"
+              >
+                <UserPlus size={18} />
+              </button>
+            </div>
           </div>
 
           <div className="cart-items">
@@ -798,7 +862,31 @@ const POSModule = () => {
                 <div key={item.product_id} className="cart-item">
                   <div className="cart-item-info">
                     <span className="item-name">{item.designation}</span>
-                    <span className="item-price">{formatCurrency(item.prix_unitaire)}</span>
+                    {editingCartPrice === item.product_id ? (
+                      <div className="cart-price-edit" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="number"
+                          value={editCartPriceValue}
+                          onChange={(e) => setEditCartPriceValue(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveCartPrice(item.product_id); if (e.key === 'Escape') cancelEditCartPrice(); }}
+                          autoFocus
+                          min="0"
+                          className="cart-price-input"
+                          data-testid={`cart-price-input-${item.product_id}`}
+                        />
+                        <button className="inline-price-btn save" onClick={() => saveCartPrice(item.product_id)}><CheckCircle size={14} /></button>
+                        <button className="inline-price-btn cancel" onClick={cancelEditCartPrice}><X size={14} /></button>
+                      </div>
+                    ) : (
+                      <span
+                        className="item-price editable"
+                        onClick={() => startEditCartPrice(item.product_id, item.prix_unitaire)}
+                        title="Cliquer pour modifier le prix"
+                        data-testid={`cart-item-price-${item.product_id}`}
+                      >
+                        {formatCurrency(item.prix_unitaire)} <Edit size={11} className="edit-icon-cart" />
+                      </span>
+                    )}
                   </div>
                   <div className="cart-item-controls">
                     <button className="qty-btn" onClick={() => updateCartQuantity(item.product_id, -1)}>
@@ -1059,6 +1147,49 @@ const POSModule = () => {
                 {(!todaySales.ventes || todaySales.ventes.length === 0) && (
                   <p className="no-data">Aucune vente aujourd'hui</p>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Add Client Modal */}
+      {showAddClientModal && (
+        <div className="modal-overlay" onClick={() => setShowAddClientModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Nouveau Client</h3>
+              <button className="btn-close" onClick={() => setShowAddClientModal(false)}><X /></button>
+            </div>
+            <div className="modal-form">
+              <div className="form-group">
+                <label>Nom du client *</label>
+                <input
+                  type="text"
+                  value={newClientName}
+                  onChange={(e) => setNewClientName(e.target.value)}
+                  placeholder="Nom complet"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter') addQuickClient(); }}
+                  data-testid="quick-client-name-input"
+                />
+              </div>
+              <div className="form-group">
+                <label>Téléphone</label>
+                <input
+                  type="tel"
+                  value={newClientPhone}
+                  onChange={(e) => setNewClientPhone(e.target.value)}
+                  placeholder="Numéro de téléphone"
+                  onKeyDown={(e) => { if (e.key === 'Enter') addQuickClient(); }}
+                  data-testid="quick-client-phone-input"
+                />
+              </div>
+              <div className="modal-actions">
+                <button className="btn btn-secondary" onClick={() => setShowAddClientModal(false)}>Annuler</button>
+                <button className="btn btn-primary" onClick={addQuickClient} data-testid="quick-client-submit-btn">
+                  <UserPlus size={18} /> Ajouter
+                </button>
               </div>
             </div>
           </div>

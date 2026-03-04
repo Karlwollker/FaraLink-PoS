@@ -1850,14 +1850,81 @@ body {
   border-bottom: 1px solid var(--border-color);
 }
 
-.cart-client select {
-  width: 100%;
+.cart-client-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cart-client-row select {
+  flex: 1;
   padding: 10px 14px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: 0.9rem;
+}
+
+.btn-add-client {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+
+.btn-add-client:hover {
+  opacity: 0.85;
+}
+
+/* Cart price editing */
+.item-price.editable {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.item-price.editable:hover {
+  background: var(--bg-hover);
+}
+
+.edit-icon-cart {
+  opacity: 0;
+  transition: opacity 0.15s;
+  color: var(--text-muted);
+}
+
+.item-price.editable:hover .edit-icon-cart {
+  opacity: 1;
+}
+
+.cart-price-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cart-price-input {
+  width: 80px;
+  padding: 3px 6px;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  outline: none;
 }
 
 .cart-items {

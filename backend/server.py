@@ -307,6 +307,7 @@ class Sale(BaseModel):
 class SaleLineCreate(BaseModel):
     product_id: str
     quantite: int
+    prix_unitaire: Optional[float] = None
 
 class SaleCreate(BaseModel):
     client_id: Optional[str] = None
@@ -944,7 +945,8 @@ async def create_sale(input: SaleCreate):
                 detail=f"Stock insuffisant pour {product['designation']}. Disponible: {product['quantite_stock']}"
             )
         
-        montant_ht = ligne_input.quantite * product["prix_vente"]
+        prix_vente = ligne_input.prix_unitaire if ligne_input.prix_unitaire is not None else product["prix_vente"]
+        montant_ht = ligne_input.quantite * prix_vente
         montant_tva = montant_ht * (product["tva"] / 100)
         montant_ttc = montant_ht + montant_tva
         
@@ -953,7 +955,7 @@ async def create_sale(input: SaleCreate):
             product_code=product["code"],
             designation=product["designation"],
             quantite=ligne_input.quantite,
-            prix_unitaire=product["prix_vente"],
+            prix_unitaire=prix_vente,
             tva=product["tva"],
             montant_ht=montant_ht,
             montant_tva=montant_tva,

@@ -99,6 +99,9 @@ Création d'une application de gestion commerciale complète pour commerce de d�
 ### P0 (Critique) - Terminé
 - ✅ Toutes les fonctionnalités core implémentées
 - ✅ Point de Vente fonctionnel
+- ✅ Modification des prix inline (tableau + POS)
+- ✅ Ajout rapide de client depuis le POS
+- ✅ Validation de vente complète avec ticket
 
 ### P1 (Important) - À considérer
 - [ ] Impression thermique ticket de caisse
