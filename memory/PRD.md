@@ -103,6 +103,8 @@ Création d'une application de gestion commerciale complète pour commerce de d�
 - ✅ Ajout rapide de client depuis le POS
 - ✅ Validation de vente complète avec ticket
 - ✅ Application responsive (mobile 375px, tablette 768px, desktop 1920px)
+- ✅ Import produits depuis fichier Excel (.xlsx) avec modèle téléchargeable
+- ✅ Gestion des catégories (CRUD) avec modal dédié
 
 ### P1 (Important) - À considérer
 - [ ] Impression thermique ticket de caisse
