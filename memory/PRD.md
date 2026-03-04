@@ -105,12 +105,12 @@ Création d'une application de gestion commerciale complète pour commerce de d�
 - ✅ Application responsive (mobile 375px, tablette 768px, desktop 1920px)
 - ✅ Import produits depuis fichier Excel (.xlsx) avec modèle téléchargeable
 - ✅ Gestion des catégories (CRUD) avec modal dédié
+- ✅ PWA complète : installable Android/iPhone, Service Worker, mode hors ligne, synchronisation
 
 ### P1 (Important) - À considérer
 - [ ] Impression thermique ticket de caisse
 - [ ] Bons de commande fournisseurs
 - [ ] Gestion des remises/promotions
-- [ ] PWA avec mode hors ligne complet
 
 ### P2 (Nice to have)
 - [ ] Lecteur code-barres physique
