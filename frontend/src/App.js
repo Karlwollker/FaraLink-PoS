@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
 import axios from 'axios';
 import { Toaster, toast } from 'sonner';
 import {
@@ -7,19 +7,25 @@ import {
   Edit, Trash2, Eye, Download, AlertTriangle, TrendingUp,
   CheckCircle, Clock, X, Menu, Minus, CreditCard, Banknote,
   Smartphone, Receipt, DollarSign, XCircle, Calculator,
-  RefreshCw, Printer
+  RefreshCw, Printer, Settings, Save, Store, Phone, Mail,
+  Globe, Palette, Percent
 } from 'lucide-react';
 import './App.css';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
-// Format currency in FCFA
-const formatCurrency = (amount) => {
+// Settings Context
+const SettingsContext = createContext(null);
+
+const useSettings = () => useContext(SettingsContext);
+
+// Format currency with settings
+const formatCurrency = (amount, devise = 'FCFA') => {
   return new Intl.NumberFormat('fr-FR', {
     style: 'decimal',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
-  }).format(amount) + ' FCFA';
+  }).format(amount) + ' ' + devise;
 };
 
 // Format date
@@ -47,6 +53,8 @@ const formatDateTime = (dateString) => {
 
 // ==================== SIDEBAR ====================
 const Sidebar = ({ activeModule, setActiveModule, isMobileMenuOpen, setIsMobileMenuOpen }) => {
+  const settings = useSettings();
+  
   const menuItems = [
     { id: 'dashboard', label: 'Tableau de Bord', icon: LayoutDashboard },
     { id: 'pos', label: 'Point de Vente', icon: ShoppingCart },
@@ -56,12 +64,13 @@ const Sidebar = ({ activeModule, setActiveModule, isMobileMenuOpen, setIsMobileM
     { id: 'stock', label: 'Stock', icon: Warehouse },
     { id: 'inventory', label: 'Inventaires', icon: ClipboardList },
     { id: 'reports', label: 'Rapports', icon: BarChart3 },
+    { id: 'settings', label: 'Paramètres', icon: Settings },
   ];
 
   return (
     <aside className={`sidebar ${isMobileMenuOpen ? 'open' : ''}`}>
       <div className="sidebar-header">
-        <h1 className="logo">FaraLink</h1>
+        <h1 className="logo">{settings?.nom_boutique || 'FaraLink'}</h1>
         <span className="logo-subtitle">Point de Vente</span>
       </div>
       <nav className="sidebar-nav">
@@ -81,7 +90,7 @@ const Sidebar = ({ activeModule, setActiveModule, isMobileMenuOpen, setIsMobileM
         ))}
       </nav>
       <div className="sidebar-footer">
-        <span>Devise: FCFA</span>
+        <span>Devise: {settings?.devise || 'FCFA'}</span>
       </div>
     </aside>
   );
@@ -201,6 +210,7 @@ const Dashboard = ({ setActiveModule }) => {
 
 // ==================== POINT OF SALE MODULE ====================
 const POSModule = () => {
+  const settings = useSettings();
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [clients, setClients] = useState([]);
@@ -219,6 +229,10 @@ const POSModule = () => {
   const [showReceipt, setShowReceipt] = useState(false);
   const [lastSale, setLastSale] = useState(null);
   const searchInputRef = useRef(null);
+  
+  const devise = settings?.devise || 'FCFA';
+  const tvaActive = settings?.tva_active || false;
+  const tauxTva = settings?.taux_tva || 0;
 
   useEffect(() => {
     fetchInitialData();
@@ -341,6 +355,8 @@ const POSModule = () => {
   };
 
   const cartTotal = cart.reduce((sum, item) => sum + (item.prix_unitaire * item.quantite), 0);
+  const cartTVA = tvaActive ? cartTotal * (tauxTva / 100) : 0;
+  const cartTTC = cartTotal + cartTVA;
 
   const handleBarcodeScan = async (e) => {
     if (e.key === 'Enter' && searchQuery) {
@@ -360,8 +376,9 @@ const POSModule = () => {
       return;
     }
 
+    const totalToPay = tvaActive ? cartTTC : cartTotal;
     const received = parseFloat(amountReceived) || 0;
-    if (paymentMethod === 'Espèces' && received < cartTotal) {
+    if (paymentMethod === 'Espèces' && received < totalToPay) {
       toast.error('Montant reçu insuffisant');
       return;
     }
@@ -373,7 +390,7 @@ const POSModule = () => {
           product_id: item.product_id,
           quantite: item.quantite
         })),
-        montant_recu: received || cartTotal,
+        montant_recu: received || totalToPay,
         mode_paiement: paymentMethod
       });
       
@@ -390,7 +407,8 @@ const POSModule = () => {
     }
   };
 
-  const change = (parseFloat(amountReceived) || 0) - cartTotal;
+  const totalToPay = tvaActive ? cartTTC : cartTotal;
+  const change = (parseFloat(amountReceived) || 0) - totalToPay;
 
   // Check if cash register is closed
   if (!cashRegister?.caisse_ouverte) {
@@ -581,9 +599,19 @@ const POSModule = () => {
           </div>
 
           <div className="cart-summary">
+            <div className="summary-row">
+              <span>Sous-total HT</span>
+              <span>{formatCurrency(cartTotal, devise)}</span>
+            </div>
+            {tvaActive && (
+              <div className="summary-row">
+                <span>TVA ({tauxTva}%)</span>
+                <span>{formatCurrency(cartTVA, devise)}</span>
+              </div>
+            )}
             <div className="summary-row total">
-              <span>Total HT</span>
-              <span>{formatCurrency(cartTotal)}</span>
+              <span>Total {tvaActive ? 'TTC' : 'HT'}</span>
+              <span>{formatCurrency(totalToPay, devise)}</span>
             </div>
           </div>
 
@@ -593,7 +621,7 @@ const POSModule = () => {
             disabled={cart.length === 0}
             data-testid="pay-btn"
           >
-            <Banknote size={20} /> Payer {formatCurrency(cartTotal)}
+            <Banknote size={20} /> Payer {formatCurrency(totalToPay, devise)}
           </button>
         </div>
       </div>
@@ -609,7 +637,7 @@ const POSModule = () => {
             <div className="payment-content">
               <div className="payment-total">
                 <span>Total à payer</span>
-                <span className="total-amount">{formatCurrency(cartTotal)}</span>
+                <span className="total-amount">{formatCurrency(totalToPay, devise)}</span>
               </div>
 
               <div className="payment-methods">
@@ -657,12 +685,12 @@ const POSModule = () => {
                         className="quick-amount-btn"
                         onClick={() => setAmountReceived(amount.toString())}
                       >
-                        {formatCurrency(amount)}
+                        {formatCurrency(amount, devise)}
                       </button>
                     ))}
                     <button
                       className="quick-amount-btn exact"
-                      onClick={() => setAmountReceived(Math.ceil(cartTotal).toString())}
+                      onClick={() => setAmountReceived(Math.ceil(totalToPay).toString())}
                     >
                       Exact
                     </button>
@@ -695,9 +723,10 @@ const POSModule = () => {
           <div className="modal modal-receipt" onClick={e => e.stopPropagation()}>
             <div className="receipt">
               <div className="receipt-header">
-                <h2>FaraLink</h2>
-                <p>Akwa, Douala Cameroun</p>
-                <p>Tél: +237 699 397 286</p>
+                <h2>{settings?.nom_boutique || 'FaraLink'}</h2>
+                <p>{settings?.adresse || ''}</p>
+                {settings?.telephone && <p>Tél: {settings.telephone}</p>}
+                {settings?.email && <p>{settings.email}</p>}
               </div>
               <div className="receipt-info">
                 <p><strong>Ticket:</strong> {lastSale.numero_ticket}</p>
@@ -709,28 +738,46 @@ const POSModule = () => {
                   <div key={i} className="receipt-item">
                     <div className="receipt-item-name">{ligne.designation}</div>
                     <div className="receipt-item-detail">
-                      {ligne.quantite} x {formatCurrency(ligne.prix_unitaire)} = {formatCurrency(ligne.montant_ht)}
+                      {ligne.quantite} x {formatCurrency(ligne.prix_unitaire, devise)} = {formatCurrency(ligne.montant_ht, devise)}
                     </div>
                   </div>
                 ))}
               </div>
               <div className="receipt-totals">
-                <div className="receipt-row total">
+                <div className="receipt-row">
                   <span>Total HT:</span>
-                  <span>{formatCurrency(lastSale.montant_ht)}</span>
+                  <span>{formatCurrency(lastSale.montant_ht, devise)}</span>
                 </div>
+                {tvaActive && lastSale.montant_tva > 0 && (
+                  <div className="receipt-row">
+                    <span>TVA ({tauxTva}%):</span>
+                    <span>{formatCurrency(lastSale.montant_tva, devise)}</span>
+                  </div>
+                )}
+                {tvaActive && (
+                  <div className="receipt-row total">
+                    <span>Total TTC:</span>
+                    <span>{formatCurrency(lastSale.montant_ttc, devise)}</span>
+                  </div>
+                )}
+                {!tvaActive && (
+                  <div className="receipt-row total">
+                    <span>Total:</span>
+                    <span>{formatCurrency(lastSale.montant_ht, devise)}</span>
+                  </div>
+                )}
                 <div className="receipt-row">
                   <span>Payé ({lastSale.mode_paiement}):</span>
-                  <span>{formatCurrency(lastSale.montant_recu)}</span>
+                  <span>{formatCurrency(lastSale.montant_recu, devise)}</span>
                 </div>
                 <div className="receipt-row">
                   <span>Rendu:</span>
-                  <span>{formatCurrency(lastSale.montant_rendu)}</span>
+                  <span>{formatCurrency(lastSale.montant_rendu, devise)}</span>
                 </div>
               </div>
               <div className="receipt-footer">
-                <p>Merci pour votre achat !</p>
-                <p className="receipt-slogan">FaraLink - Votre partenaire de confiance</p>
+                <p>{settings?.message_ticket || 'Merci pour votre achat !'}</p>
+                {settings?.slogan && <p className="receipt-slogan">{settings.nom_boutique} - {settings.slogan}</p>}
               </div>
             </div>
             <div className="receipt-actions">
@@ -1692,10 +1739,282 @@ const ReportsModule = () => {
   );
 };
 
+// ==================== SETTINGS MODULE ====================
+const SettingsModule = ({ onSettingsUpdate }) => {
+  const settings = useSettings();
+  const [formData, setFormData] = useState({
+    nom_boutique: '',
+    slogan: '',
+    adresse: '',
+    telephone: '',
+    email: '',
+    site_web: '',
+    message_ticket: '',
+    devise: 'FCFA',
+    tva_active: false,
+    taux_tva: 0,
+    couleur_principale: '#1e40af'
+  });
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (settings) {
+      setFormData({
+        nom_boutique: settings.nom_boutique || '',
+        slogan: settings.slogan || '',
+        adresse: settings.adresse || '',
+        telephone: settings.telephone || '',
+        email: settings.email || '',
+        site_web: settings.site_web || '',
+        message_ticket: settings.message_ticket || '',
+        devise: settings.devise || 'FCFA',
+        tva_active: settings.tva_active || false,
+        taux_tva: settings.taux_tva || 0,
+        couleur_principale: settings.couleur_principale || '#1e40af'
+      });
+    }
+  }, [settings]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      const res = await axios.put(`${API_URL}/api/settings`, {
+        ...formData,
+        taux_tva: parseFloat(formData.taux_tva) || 0
+      });
+      onSettingsUpdate(res.data);
+      toast.success('Paramètres enregistrés avec succès !');
+    } catch (error) {
+      toast.error('Erreur lors de l\'enregistrement');
+    }
+    setIsSaving(false);
+  };
+
+  const devises = ['FCFA', 'XAF', 'EUR', 'USD', 'GBP', 'MAD', 'XOF'];
+  const couleurs = [
+    { name: 'Bleu', value: '#1e40af' },
+    { name: 'Vert', value: '#059669' },
+    { name: 'Rouge', value: '#dc2626' },
+    { name: 'Orange', value: '#d97706' },
+    { name: 'Violet', value: '#7c3aed' },
+    { name: 'Rose', value: '#db2777' },
+    { name: 'Cyan', value: '#0891b2' },
+    { name: 'Gris', value: '#475569' }
+  ];
+
+  return (
+    <div className="module settings-module" data-testid="settings-module">
+      <div className="module-header">
+        <h2 className="page-title">Paramètres de l'Application</h2>
+      </div>
+
+      <form onSubmit={handleSubmit} className="settings-form">
+        {/* Informations Boutique */}
+        <div className="settings-section">
+          <h3><Store size={20} /> Informations de la Boutique</h3>
+          <div className="settings-grid">
+            <div className="form-group">
+              <label>Nom de la Boutique *</label>
+              <input
+                type="text"
+                value={formData.nom_boutique}
+                onChange={(e) => setFormData({...formData, nom_boutique: e.target.value})}
+                required
+                placeholder="Ex: FaraLink"
+                data-testid="settings-name-input"
+              />
+            </div>
+            <div className="form-group">
+              <label>Slogan</label>
+              <input
+                type="text"
+                value={formData.slogan}
+                onChange={(e) => setFormData({...formData, slogan: e.target.value})}
+                placeholder="Ex: Votre partenaire de confiance"
+                data-testid="settings-slogan-input"
+              />
+            </div>
+            <div className="form-group full-width">
+              <label>Adresse</label>
+              <input
+                type="text"
+                value={formData.adresse}
+                onChange={(e) => setFormData({...formData, adresse: e.target.value})}
+                placeholder="Ex: Akwa, Douala Cameroun"
+                data-testid="settings-address-input"
+              />
+            </div>
+            <div className="form-group">
+              <label><Phone size={16} /> Téléphone</label>
+              <input
+                type="tel"
+                value={formData.telephone}
+                onChange={(e) => setFormData({...formData, telephone: e.target.value})}
+                placeholder="Ex: +237 699 397 286"
+                data-testid="settings-phone-input"
+              />
+            </div>
+            <div className="form-group">
+              <label><Mail size={16} /> Email</label>
+              <input
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({...formData, email: e.target.value})}
+                placeholder="Ex: contact@faralink.com"
+                data-testid="settings-email-input"
+              />
+            </div>
+            <div className="form-group">
+              <label><Globe size={16} /> Site Web</label>
+              <input
+                type="url"
+                value={formData.site_web}
+                onChange={(e) => setFormData({...formData, site_web: e.target.value})}
+                placeholder="Ex: www.faralink.com"
+                data-testid="settings-website-input"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Configuration Ticket */}
+        <div className="settings-section">
+          <h3><Receipt size={20} /> Configuration du Ticket</h3>
+          <div className="settings-grid">
+            <div className="form-group full-width">
+              <label>Message sur le Ticket</label>
+              <input
+                type="text"
+                value={formData.message_ticket}
+                onChange={(e) => setFormData({...formData, message_ticket: e.target.value})}
+                placeholder="Ex: Merci pour votre achat !"
+                data-testid="settings-message-input"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Configuration Fiscale */}
+        <div className="settings-section">
+          <h3><Percent size={20} /> Configuration Fiscale</h3>
+          <div className="settings-grid">
+            <div className="form-group">
+              <label>Devise</label>
+              <select
+                value={formData.devise}
+                onChange={(e) => setFormData({...formData, devise: e.target.value})}
+                data-testid="settings-currency-select"
+              >
+                {devises.map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="checkbox-container">
+                <input
+                  type="checkbox"
+                  checked={formData.tva_active}
+                  onChange={(e) => setFormData({...formData, tva_active: e.target.checked})}
+                  data-testid="settings-tva-checkbox"
+                />
+                <span className="checkmark"></span>
+                Activer la TVA
+              </label>
+            </div>
+            {formData.tva_active && (
+              <div className="form-group">
+                <label>Taux de TVA (%)</label>
+                <input
+                  type="number"
+                  value={formData.taux_tva}
+                  onChange={(e) => setFormData({...formData, taux_tva: e.target.value})}
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  placeholder="Ex: 19.25"
+                  data-testid="settings-tva-rate-input"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Apparence */}
+        <div className="settings-section">
+          <h3><Palette size={20} /> Apparence</h3>
+          <div className="settings-grid">
+            <div className="form-group full-width">
+              <label>Couleur Principale</label>
+              <div className="color-picker">
+                {couleurs.map(c => (
+                  <button
+                    key={c.value}
+                    type="button"
+                    className={`color-option ${formData.couleur_principale === c.value ? 'active' : ''}`}
+                    style={{ backgroundColor: c.value }}
+                    onClick={() => setFormData({...formData, couleur_principale: c.value})}
+                    title={c.name}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-actions">
+          <button type="submit" className="btn btn-primary btn-large" disabled={isSaving} data-testid="settings-save-btn">
+            <Save size={20} /> {isSaving ? 'Enregistrement...' : 'Enregistrer les Paramètres'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
 // ==================== MAIN APP ====================
 function App() {
   const [activeModule, setActiveModule] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [settings, setSettings] = useState(null);
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/api/settings`);
+      setSettings(res.data);
+      // Apply color theme
+      if (res.data.couleur_principale) {
+        document.documentElement.style.setProperty('--primary', res.data.couleur_principale);
+        document.documentElement.style.setProperty('--primary-light', adjustColor(res.data.couleur_principale, 20));
+        document.documentElement.style.setProperty('--primary-dark', adjustColor(res.data.couleur_principale, -20));
+      }
+    } catch (error) {
+      console.error('Error fetching settings');
+    }
+  };
+
+  const adjustColor = (color, amount) => {
+    const clamp = (num) => Math.min(255, Math.max(0, num));
+    const hex = color.replace('#', '');
+    const r = clamp(parseInt(hex.substr(0, 2), 16) + amount);
+    const g = clamp(parseInt(hex.substr(2, 2), 16) + amount);
+    const b = clamp(parseInt(hex.substr(4, 2), 16) + amount);
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  };
+
+  const handleSettingsUpdate = (newSettings) => {
+    setSettings(newSettings);
+    if (newSettings.couleur_principale) {
+      document.documentElement.style.setProperty('--primary', newSettings.couleur_principale);
+      document.documentElement.style.setProperty('--primary-light', adjustColor(newSettings.couleur_principale, 20));
+      document.documentElement.style.setProperty('--primary-dark', adjustColor(newSettings.couleur_principale, -20));
+    }
+  };
 
   const renderModule = () => {
     switch (activeModule) {
@@ -1707,18 +2026,21 @@ function App() {
       case 'stock': return <StockModule />;
       case 'inventory': return <InventoryModule />;
       case 'reports': return <ReportsModule />;
+      case 'settings': return <SettingsModule onSettingsUpdate={handleSettingsUpdate} />;
       default: return <Dashboard setActiveModule={setActiveModule} />;
     }
   };
 
   return (
-    <div className="app">
-      <Toaster position="top-right" richColors />
-      <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} data-testid="mobile-menu-btn"><Menu /></button>
-      <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} isMobileMenuOpen={isMobileMenuOpen} setIsMobileMenuOpen={setIsMobileMenuOpen} />
-      <main className="main-content">{renderModule()}</main>
-      {isMobileMenuOpen && <div className="mobile-overlay" onClick={() => setIsMobileMenuOpen(false)} />}
-    </div>
+    <SettingsContext.Provider value={settings}>
+      <div className="app">
+        <Toaster position="top-right" richColors />
+        <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} data-testid="mobile-menu-btn"><Menu /></button>
+        <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} isMobileMenuOpen={isMobileMenuOpen} setIsMobileMenuOpen={setIsMobileMenuOpen} />
+        <main className="main-content">{renderModule()}</main>
+        {isMobileMenuOpen && <div className="mobile-overlay" onClick={() => setIsMobileMenuOpen(false)} />}
+      </div>
+    </SettingsContext.Provider>
   );
 }
 

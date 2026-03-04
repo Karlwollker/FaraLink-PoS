@@ -35,6 +35,38 @@ logger = logging.getLogger(__name__)
 
 # ==================== MODELS ====================
 
+# Settings Model
+class AppSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = "app_settings"
+    nom_boutique: str = "FaraLink"
+    slogan: str = "Votre partenaire de confiance"
+    adresse: str = "Akwa, Douala Cameroun"
+    telephone: str = "+237 699 397 286"
+    email: Optional[str] = None
+    site_web: Optional[str] = None
+    message_ticket: str = "Merci pour votre achat !"
+    devise: str = "FCFA"
+    tva_active: bool = False
+    taux_tva: float = 0.0
+    couleur_principale: str = "#1e40af"
+    logo_url: Optional[str] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class AppSettingsUpdate(BaseModel):
+    nom_boutique: Optional[str] = None
+    slogan: Optional[str] = None
+    adresse: Optional[str] = None
+    telephone: Optional[str] = None
+    email: Optional[str] = None
+    site_web: Optional[str] = None
+    message_ticket: Optional[str] = None
+    devise: Optional[str] = None
+    tva_active: Optional[bool] = None
+    taux_tva: Optional[float] = None
+    couleur_principale: Optional[str] = None
+    logo_url: Optional[str] = None
+
 # Product Models
 class Product(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -324,7 +356,39 @@ async def get_current_cash_register():
 
 @api_router.get("/")
 async def root():
-    return {"message": "API Gestion Commerciale - Point de Vente - FCFA"}
+    return {"message": "API FaraLink - Point de Vente - FCFA"}
+
+# ==================== SETTINGS ====================
+
+@api_router.get("/settings", response_model=AppSettings)
+async def get_settings():
+    """Get application settings"""
+    settings = await db.settings.find_one({"id": "app_settings"}, {"_id": 0})
+    if not settings:
+        # Create default settings
+        default_settings = AppSettings()
+        doc = serialize_doc(default_settings.model_dump())
+        await db.settings.insert_one(doc)
+        return default_settings
+    return deserialize_doc(settings)
+
+@api_router.put("/settings", response_model=AppSettings)
+async def update_settings(input: AppSettingsUpdate):
+    """Update application settings"""
+    settings = await db.settings.find_one({"id": "app_settings"}, {"_id": 0})
+    if not settings:
+        default_settings = AppSettings()
+        doc = serialize_doc(default_settings.model_dump())
+        await db.settings.insert_one(doc)
+        settings = default_settings.model_dump()
+    
+    update_data = {k: v for k, v in input.model_dump().items() if v is not None}
+    if update_data:
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.settings.update_one({"id": "app_settings"}, {"$set": update_data})
+    
+    updated = await db.settings.find_one({"id": "app_settings"}, {"_id": 0})
+    return deserialize_doc(updated)
 
 # ==================== PRODUCTS ====================
 
