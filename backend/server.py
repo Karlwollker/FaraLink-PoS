@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import io
 
 ROOT_DIR = Path(__file__).parent
@@ -21,7 +21,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # Create the main app without a prefix
-app = FastAPI(title="Gestion Commerciale API")
+app = FastAPI(title="Gestion Commerciale API - POS")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -134,8 +134,10 @@ class SupplierUpdate(BaseModel):
     adresse: Optional[str] = None
     ville: Optional[str] = None
 
-# Invoice Line Item
-class InvoiceLine(BaseModel):
+# ==================== POS MODELS ====================
+
+# Sale Line Item (for POS)
+class SaleLine(BaseModel):
     product_id: str
     product_code: str
     designation: str
@@ -146,36 +148,62 @@ class InvoiceLine(BaseModel):
     montant_tva: float
     montant_ttc: float
 
-# Invoice Models
-class Invoice(BaseModel):
+# Sale/Ticket Model (replaces Invoice)
+class Sale(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    numero: str
-    date_facture: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    client_id: str
-    client_nom: str
-    lignes: List[InvoiceLine]
+    numero_ticket: str
+    date_vente: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    client_id: Optional[str] = None
+    client_nom: Optional[str] = "Client Comptoir"
+    lignes: List[SaleLine]
     montant_ht: float
     montant_tva: float
     montant_ttc: float
-    statut: str = "En attente"  # En attente, Payée, Annulée
-    mode_paiement: Optional[str] = None
-    notes: Optional[str] = None
+    montant_recu: float
+    montant_rendu: float
+    mode_paiement: str = "Espèces"
+    caisse_id: Optional[str] = None
+    vendeur: Optional[str] = None
+    annulee: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-class InvoiceLineCreate(BaseModel):
+class SaleLineCreate(BaseModel):
     product_id: str
     quantite: int
 
-class InvoiceCreate(BaseModel):
-    client_id: str
-    lignes: List[InvoiceLineCreate]
-    mode_paiement: Optional[str] = None
-    notes: Optional[str] = None
+class SaleCreate(BaseModel):
+    client_id: Optional[str] = None
+    lignes: List[SaleLineCreate]
+    montant_recu: float
+    mode_paiement: str = "Espèces"
+    vendeur: Optional[str] = None
 
-class InvoiceUpdateStatus(BaseModel):
-    statut: str
-    mode_paiement: Optional[str] = None
+# Cash Register (Caisse) Model
+class CashRegister(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    date_ouverture: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    date_fermeture: Optional[datetime] = None
+    fond_caisse: float  # Opening cash
+    total_especes: float = 0.0
+    total_mobile_money: float = 0.0
+    total_carte: float = 0.0
+    total_ventes: float = 0.0
+    nombre_tickets: int = 0
+    ecart: float = 0.0
+    statut: str = "Ouverte"  # Ouverte, Fermée
+    vendeur: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class CashRegisterOpen(BaseModel):
+    fond_caisse: float
+    vendeur: Optional[str] = None
+
+class CashRegisterClose(BaseModel):
+    montant_compte: float  # Counted cash at closing
+    notes: Optional[str] = None
 
 # Stock Movement Models
 class StockMovement(BaseModel):
@@ -188,7 +216,7 @@ class StockMovement(BaseModel):
     quantite: int
     quantite_avant: int
     quantite_apres: int
-    reference: Optional[str] = None  # Numéro facture, bon de livraison, etc.
+    reference: Optional[str] = None
     motif: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -214,7 +242,7 @@ class Inventory(BaseModel):
     numero: str
     date_inventaire: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     lignes: List[InventoryLine]
-    statut: str = "En cours"  # En cours, Validé
+    statut: str = "En cours"
     notes: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -231,41 +259,40 @@ class DashboardStats(BaseModel):
     total_products: int
     total_clients: int
     total_suppliers: int
-    total_invoices: int
+    total_sales: int
     chiffre_affaires_jour: float
     chiffre_affaires_mois: float
     products_low_stock: int
-    invoices_pending: int
+    caisse_ouverte: bool
+    fond_caisse_actuel: float
 
 # ==================== HELPER FUNCTIONS ====================
 
 async def get_next_numero(collection_name: str, prefix: str) -> str:
-    """Generate next sequential number for invoices, inventories, etc."""
+    """Generate next sequential number"""
     today = datetime.now(timezone.utc)
-    year_month = today.strftime("%Y%m")
+    year_month_day = today.strftime("%Y%m%d")
     
-    # Find the last document with this prefix and year_month
     last_doc = await db[collection_name].find_one(
-        {"numero": {"$regex": f"^{prefix}{year_month}"}},
-        sort=[("numero", -1)]
+        {"numero_ticket": {"$regex": f"^{prefix}{year_month_day}"}} if collection_name == "sales" else {"numero": {"$regex": f"^{prefix}{year_month_day}"}},
+        sort=[("created_at", -1)]
     )
     
     if last_doc:
-        last_num = int(last_doc["numero"][-4:])
+        key = "numero_ticket" if collection_name == "sales" else "numero"
+        last_num = int(last_doc[key][-4:])
         new_num = last_num + 1
     else:
         new_num = 1
     
-    return f"{prefix}{year_month}{new_num:04d}"
+    return f"{prefix}{year_month_day}{new_num:04d}"
 
 def serialize_datetime(obj):
-    """Convert datetime to ISO string for MongoDB"""
     if isinstance(obj, datetime):
         return obj.isoformat()
     return obj
 
 def serialize_doc(doc: dict) -> dict:
-    """Serialize document for MongoDB storage"""
     result = {}
     for key, value in doc.items():
         if isinstance(value, datetime):
@@ -279,27 +306,30 @@ def serialize_doc(doc: dict) -> dict:
     return result
 
 def deserialize_doc(doc: dict) -> dict:
-    """Deserialize document from MongoDB"""
     if not doc:
         return doc
     
-    datetime_fields = ['created_at', 'updated_at', 'date_facture', 'date_inventaire']
+    datetime_fields = ['created_at', 'updated_at', 'date_vente', 'date_inventaire', 'date_ouverture', 'date_fermeture']
     for field in datetime_fields:
         if field in doc and isinstance(doc[field], str):
             doc[field] = datetime.fromisoformat(doc[field])
     return doc
 
+async def get_current_cash_register():
+    """Get current open cash register"""
+    register = await db.cash_registers.find_one({"statut": "Ouverte"}, {"_id": 0})
+    return deserialize_doc(register) if register else None
+
 # ==================== ROUTES ====================
 
 @api_router.get("/")
 async def root():
-    return {"message": "API Gestion Commerciale - FCFA"}
+    return {"message": "API Gestion Commerciale - Point de Vente - FCFA"}
 
 # ==================== PRODUCTS ====================
 
 @api_router.post("/products", response_model=Product)
 async def create_product(input: ProductCreate):
-    # Check if code already exists
     existing = await db.products.find_one({"code": input.code})
     if existing:
         raise HTTPException(status_code=400, detail="Ce code produit existe déjà")
@@ -329,6 +359,17 @@ async def get_products(
     
     products = await db.products.find(query, {"_id": 0}).to_list(1000)
     return [deserialize_doc(p) for p in products]
+
+@api_router.get("/products/search-barcode/{barcode}")
+async def search_by_barcode(barcode: str):
+    """Quick search by barcode for POS"""
+    product = await db.products.find_one(
+        {"$or": [{"code_barre": barcode}, {"code": barcode}]},
+        {"_id": 0}
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="Produit non trouvé")
+    return deserialize_doc(product)
 
 @api_router.get("/products/{product_id}", response_model=Product)
 async def get_product(product_id: str):
@@ -469,16 +510,88 @@ async def delete_supplier(supplier_id: str):
         raise HTTPException(status_code=404, detail="Fournisseur non trouvé")
     return {"message": "Fournisseur supprimé"}
 
-# ==================== INVOICES ====================
+# ==================== CASH REGISTER (CAISSE) ====================
 
-@api_router.post("/invoices", response_model=Invoice)
-async def create_invoice(input: InvoiceCreate):
-    # Get client
-    client = await db.clients.find_one({"id": input.client_id}, {"_id": 0})
-    if not client:
-        raise HTTPException(status_code=404, detail="Client non trouvé")
+@api_router.post("/cash-register/open")
+async def open_cash_register(input: CashRegisterOpen):
+    """Open a new cash register session"""
+    existing = await get_current_cash_register()
+    if existing:
+        raise HTTPException(status_code=400, detail="Une caisse est déjà ouverte. Fermez-la d'abord.")
     
-    # Process invoice lines
+    register = CashRegister(
+        fond_caisse=input.fond_caisse,
+        vendeur=input.vendeur
+    )
+    doc = serialize_doc(register.model_dump())
+    await db.cash_registers.insert_one(doc)
+    
+    return {"message": "Caisse ouverte", "caisse_id": register.id, "fond_caisse": input.fond_caisse}
+
+@api_router.get("/cash-register/current")
+async def get_current_register():
+    """Get current open cash register status"""
+    register = await get_current_cash_register()
+    if not register:
+        return {"statut": "Fermée", "caisse_ouverte": False}
+    return {**register, "caisse_ouverte": True}
+
+@api_router.post("/cash-register/close")
+async def close_cash_register(input: CashRegisterClose):
+    """Close current cash register session"""
+    register = await get_current_cash_register()
+    if not register:
+        raise HTTPException(status_code=400, detail="Aucune caisse ouverte")
+    
+    # Calculate expected cash
+    expected_cash = register["fond_caisse"] + register["total_especes"]
+    ecart = input.montant_compte - expected_cash
+    
+    update_data = {
+        "statut": "Fermée",
+        "date_fermeture": datetime.now(timezone.utc).isoformat(),
+        "ecart": ecart,
+        "notes": input.notes
+    }
+    
+    await db.cash_registers.update_one({"id": register["id"]}, {"$set": update_data})
+    
+    return {
+        "message": "Caisse fermée",
+        "fond_caisse": register["fond_caisse"],
+        "total_ventes": register["total_ventes"],
+        "total_especes": register["total_especes"],
+        "total_mobile_money": register["total_mobile_money"],
+        "nombre_tickets": register["nombre_tickets"],
+        "montant_attendu": expected_cash,
+        "montant_compte": input.montant_compte,
+        "ecart": ecart
+    }
+
+@api_router.get("/cash-register/history")
+async def get_cash_register_history():
+    """Get history of cash register sessions"""
+    registers = await db.cash_registers.find({}, {"_id": 0}).sort("date_ouverture", -1).to_list(100)
+    return [deserialize_doc(r) for r in registers]
+
+# ==================== POINT OF SALE (POS) ====================
+
+@api_router.post("/pos/sale", response_model=Sale)
+async def create_sale(input: SaleCreate):
+    """Create a new sale (ticket de caisse)"""
+    # Check if cash register is open
+    register = await get_current_cash_register()
+    if not register:
+        raise HTTPException(status_code=400, detail="La caisse n'est pas ouverte. Ouvrez la caisse d'abord.")
+    
+    # Get client if specified
+    client_nom = "Client Comptoir"
+    if input.client_id:
+        client = await db.clients.find_one({"id": input.client_id}, {"_id": 0})
+        if client:
+            client_nom = client["nom"]
+    
+    # Process sale lines
     lignes = []
     montant_ht_total = 0.0
     montant_tva_total = 0.0
@@ -487,7 +600,7 @@ async def create_invoice(input: InvoiceCreate):
     for ligne_input in input.lignes:
         product = await db.products.find_one({"id": ligne_input.product_id}, {"_id": 0})
         if not product:
-            raise HTTPException(status_code=404, detail=f"Produit {ligne_input.product_id} non trouvé")
+            raise HTTPException(status_code=404, detail=f"Produit non trouvé")
         
         # Check stock
         if product["quantite_stock"] < ligne_input.quantite:
@@ -500,7 +613,7 @@ async def create_invoice(input: InvoiceCreate):
         montant_tva = montant_ht * (product["tva"] / 100)
         montant_ttc = montant_ht + montant_tva
         
-        ligne = InvoiceLine(
+        ligne = SaleLine(
             product_id=product["id"],
             product_code=product["code"],
             designation=product["designation"],
@@ -533,91 +646,158 @@ async def create_invoice(input: InvoiceCreate):
             quantite=ligne_input.quantite,
             quantite_avant=product["quantite_stock"],
             quantite_apres=new_stock,
-            motif="Vente"
+            motif="Vente POS"
         )
         await db.stock_movements.insert_one(serialize_doc(movement.model_dump()))
     
-    # Create invoice
-    numero = await get_next_numero("invoices", "FAC")
-    invoice = Invoice(
-        numero=numero,
+    # Calculate change
+    montant_rendu = max(0, input.montant_recu - montant_ttc_total)
+    
+    # Create sale
+    numero = await get_next_numero("sales", "TK")
+    sale = Sale(
+        numero_ticket=numero,
         client_id=input.client_id,
-        client_nom=client["nom"],
+        client_nom=client_nom,
         lignes=[l.model_dump() for l in lignes],
         montant_ht=montant_ht_total,
         montant_tva=montant_tva_total,
         montant_ttc=montant_ttc_total,
+        montant_recu=input.montant_recu,
+        montant_rendu=montant_rendu,
         mode_paiement=input.mode_paiement,
-        notes=input.notes
+        caisse_id=register["id"],
+        vendeur=input.vendeur
     )
     
-    doc = serialize_doc(invoice.model_dump())
-    await db.invoices.insert_one(doc)
+    doc = serialize_doc(sale.model_dump())
+    await db.sales.insert_one(doc)
     
-    # Update client balance
-    await db.clients.update_one(
-        {"id": input.client_id},
-        {"$inc": {"solde": montant_ttc_total}}
-    )
+    # Update cash register totals
+    update_register = {
+        "$inc": {
+            "total_ventes": montant_ttc_total,
+            "nombre_tickets": 1
+        }
+    }
     
-    return invoice
+    if input.mode_paiement == "Espèces":
+        update_register["$inc"]["total_especes"] = montant_ttc_total
+    elif input.mode_paiement in ["Mobile Money", "Orange Money", "Wave"]:
+        update_register["$inc"]["total_mobile_money"] = montant_ttc_total
+    else:
+        update_register["$inc"]["total_carte"] = montant_ttc_total
+    
+    await db.cash_registers.update_one({"id": register["id"]}, update_register)
+    
+    return sale
 
-@api_router.get("/invoices", response_model=List[Invoice])
-async def get_invoices(
-    search: Optional[str] = None,
-    statut: Optional[str] = None,
-    client_id: Optional[str] = None,
-    date_debut: Optional[str] = None,
-    date_fin: Optional[str] = None
+@api_router.get("/pos/sales", response_model=List[Sale])
+async def get_sales(
+    date: Optional[str] = None,
+    client_id: Optional[str] = None
 ):
-    query = {}
-    if search:
-        query["$or"] = [
-            {"numero": {"$regex": search, "$options": "i"}},
-            {"client_nom": {"$regex": search, "$options": "i"}}
-        ]
-    if statut:
-        query["statut"] = statut
+    """Get sales history"""
+    query = {"annulee": False}
+    if date:
+        query["date_vente"] = {"$regex": f"^{date}"}
     if client_id:
         query["client_id"] = client_id
-    if date_debut:
-        query["date_facture"] = {"$gte": date_debut}
-    if date_fin:
-        if "date_facture" in query:
-            query["date_facture"]["$lte"] = date_fin
+    
+    sales = await db.sales.find(query, {"_id": 0}).sort("date_vente", -1).to_list(500)
+    return [deserialize_doc(s) for s in sales]
+
+@api_router.get("/pos/sales/today")
+async def get_today_sales():
+    """Get today's sales summary"""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
+    sales = await db.sales.find(
+        {"date_vente": {"$regex": f"^{today}"}, "annulee": False},
+        {"_id": 0}
+    ).to_list(1000)
+    
+    total = sum(s.get("montant_ttc", 0) for s in sales)
+    count = len(sales)
+    
+    # Group by payment method
+    by_payment = {}
+    for s in sales:
+        method = s.get("mode_paiement", "Espèces")
+        by_payment[method] = by_payment.get(method, 0) + s.get("montant_ttc", 0)
+    
+    return {
+        "date": today,
+        "nombre_ventes": count,
+        "total": total,
+        "par_mode_paiement": by_payment,
+        "ventes": [deserialize_doc(s) for s in sales[:20]]  # Last 20
+    }
+
+@api_router.get("/pos/sales/{sale_id}", response_model=Sale)
+async def get_sale(sale_id: str):
+    """Get a specific sale"""
+    sale = await db.sales.find_one({"id": sale_id}, {"_id": 0})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Vente non trouvée")
+    return deserialize_doc(sale)
+
+@api_router.post("/pos/sales/{sale_id}/cancel")
+async def cancel_sale(sale_id: str):
+    """Cancel a sale and restore stock"""
+    sale = await db.sales.find_one({"id": sale_id}, {"_id": 0})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Vente non trouvée")
+    
+    if sale.get("annulee"):
+        raise HTTPException(status_code=400, detail="Cette vente est déjà annulée")
+    
+    # Restore stock for each line
+    for ligne in sale.get("lignes", []):
+        product = await db.products.find_one({"id": ligne["product_id"]}, {"_id": 0})
+        if product:
+            new_stock = product["quantite_stock"] + ligne["quantite"]
+            await db.products.update_one(
+                {"id": ligne["product_id"]},
+                {"$set": {"quantite_stock": new_stock, "updated_at": datetime.now(timezone.utc).isoformat()}}
+            )
+            
+            # Create stock movement for return
+            movement = StockMovement(
+                product_id=ligne["product_id"],
+                product_code=ligne["product_code"],
+                designation=ligne["designation"],
+                type_mouvement="Entrée",
+                quantite=ligne["quantite"],
+                quantite_avant=product["quantite_stock"],
+                quantite_apres=new_stock,
+                reference=sale["numero_ticket"],
+                motif="Annulation vente"
+            )
+            await db.stock_movements.insert_one(serialize_doc(movement.model_dump()))
+    
+    # Mark sale as cancelled
+    await db.sales.update_one({"id": sale_id}, {"$set": {"annulee": True}})
+    
+    # Update cash register if still open
+    register = await get_current_cash_register()
+    if register and register["id"] == sale.get("caisse_id"):
+        update_register = {
+            "$inc": {
+                "total_ventes": -sale["montant_ttc"],
+                "nombre_tickets": -1
+            }
+        }
+        if sale["mode_paiement"] == "Espèces":
+            update_register["$inc"]["total_especes"] = -sale["montant_ttc"]
+        elif sale["mode_paiement"] in ["Mobile Money", "Orange Money", "Wave"]:
+            update_register["$inc"]["total_mobile_money"] = -sale["montant_ttc"]
         else:
-            query["date_facture"] = {"$lte": date_fin}
+            update_register["$inc"]["total_carte"] = -sale["montant_ttc"]
+        
+        await db.cash_registers.update_one({"id": register["id"]}, update_register)
     
-    invoices = await db.invoices.find(query, {"_id": 0}).sort("date_facture", -1).to_list(1000)
-    return [deserialize_doc(i) for i in invoices]
-
-@api_router.get("/invoices/{invoice_id}", response_model=Invoice)
-async def get_invoice(invoice_id: str):
-    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-    if not invoice:
-        raise HTTPException(status_code=404, detail="Facture non trouvée")
-    return deserialize_doc(invoice)
-
-@api_router.put("/invoices/{invoice_id}/status")
-async def update_invoice_status(invoice_id: str, input: InvoiceUpdateStatus):
-    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-    if not invoice:
-        raise HTTPException(status_code=404, detail="Facture non trouvée")
-    
-    update_data = {"statut": input.statut}
-    if input.mode_paiement:
-        update_data["mode_paiement"] = input.mode_paiement
-    
-    await db.invoices.update_one({"id": invoice_id}, {"$set": update_data})
-    
-    # If paid, update client balance
-    if input.statut == "Payée" and invoice["statut"] != "Payée":
-        await db.clients.update_one(
-            {"id": invoice["client_id"]},
-            {"$inc": {"solde": -invoice["montant_ttc"]}}
-        )
-    
-    return {"message": "Statut mis à jour"}
+    return {"message": "Vente annulée, stock restauré"}
 
 # ==================== STOCK MOVEMENTS ====================
 
@@ -638,13 +818,11 @@ async def create_stock_movement(input: StockMovementCreate):
     else:  # Ajustement
         quantite_apres = input.quantite
     
-    # Update product stock
     await db.products.update_one(
         {"id": input.product_id},
         {"$set": {"quantite_stock": quantite_apres, "updated_at": datetime.now(timezone.utc).isoformat()}}
     )
     
-    # Create movement record
     movement = StockMovement(
         product_id=product["id"],
         product_code=product["code"],
@@ -665,22 +843,13 @@ async def create_stock_movement(input: StockMovementCreate):
 @api_router.get("/stock-movements", response_model=List[StockMovement])
 async def get_stock_movements(
     product_id: Optional[str] = None,
-    type_mouvement: Optional[str] = None,
-    date_debut: Optional[str] = None,
-    date_fin: Optional[str] = None
+    type_mouvement: Optional[str] = None
 ):
     query = {}
     if product_id:
         query["product_id"] = product_id
     if type_mouvement:
         query["type_mouvement"] = type_mouvement
-    if date_debut:
-        query["created_at"] = {"$gte": date_debut}
-    if date_fin:
-        if "created_at" in query:
-            query["created_at"]["$lte"] = date_fin
-        else:
-            query["created_at"] = {"$lte": date_fin}
     
     movements = await db.stock_movements.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return [deserialize_doc(m) for m in movements]
@@ -694,7 +863,7 @@ async def create_inventory(input: InventoryCreate):
     for ligne_input in input.lignes:
         product = await db.products.find_one({"id": ligne_input.product_id}, {"_id": 0})
         if not product:
-            raise HTTPException(status_code=404, detail=f"Produit {ligne_input.product_id} non trouvé")
+            raise HTTPException(status_code=404, detail=f"Produit non trouvé")
         
         ecart = ligne_input.quantite_physique - product["quantite_stock"]
         
@@ -741,16 +910,13 @@ async def validate_inventory(inventory_id: str):
     if inventory["statut"] == "Validé":
         raise HTTPException(status_code=400, detail="Inventaire déjà validé")
     
-    # Update stock for all products with discrepancies
     for ligne in inventory["lignes"]:
         if ligne["ecart"] != 0:
-            # Update product stock
             await db.products.update_one(
                 {"id": ligne["product_id"]},
                 {"$set": {"quantite_stock": ligne["quantite_physique"], "updated_at": datetime.now(timezone.utc).isoformat()}}
             )
             
-            # Create stock movement
             movement = StockMovement(
                 product_id=ligne["product_id"],
                 product_code=ligne["product_code"],
@@ -760,11 +926,10 @@ async def validate_inventory(inventory_id: str):
                 quantite_avant=ligne["quantite_theorique"],
                 quantite_apres=ligne["quantite_physique"],
                 reference=inventory["numero"],
-                motif=f"Régularisation inventaire {inventory['numero']}"
+                motif=f"Régularisation inventaire"
             )
             await db.stock_movements.insert_one(serialize_doc(movement.model_dump()))
     
-    # Update inventory status
     await db.inventories.update_one({"id": inventory_id}, {"$set": {"statut": "Validé"}})
     
     return {"message": "Inventaire validé et stock mis à jour"}
@@ -776,65 +941,63 @@ async def get_dashboard_stats():
     total_products = await db.products.count_documents({})
     total_clients = await db.clients.count_documents({})
     total_suppliers = await db.suppliers.count_documents({})
-    total_invoices = await db.invoices.count_documents({})
+    total_sales = await db.sales.count_documents({"annulee": False})
     
-    # Products with low stock
     products_low_stock = await db.products.count_documents({
         "$expr": {"$lte": ["$quantite_stock", "$stock_minimum"]}
     })
     
-    # Pending invoices
-    invoices_pending = await db.invoices.count_documents({"statut": "En attente"})
-    
     # Today's sales
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_invoices = await db.invoices.find({
-        "date_facture": {"$gte": today.isoformat()},
-        "statut": {"$ne": "Annulée"}
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_sales = await db.sales.find({
+        "date_vente": {"$regex": f"^{today}"},
+        "annulee": False
     }, {"_id": 0}).to_list(1000)
-    chiffre_affaires_jour = sum(inv.get("montant_ttc", 0) for inv in today_invoices)
+    chiffre_affaires_jour = sum(s.get("montant_ttc", 0) for s in today_sales)
     
     # This month's sales
-    first_of_month = today.replace(day=1)
-    month_invoices = await db.invoices.find({
-        "date_facture": {"$gte": first_of_month.isoformat()},
-        "statut": {"$ne": "Annulée"}
+    this_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    month_sales = await db.sales.find({
+        "date_vente": {"$regex": f"^{this_month}"},
+        "annulee": False
     }, {"_id": 0}).to_list(1000)
-    chiffre_affaires_mois = sum(inv.get("montant_ttc", 0) for inv in month_invoices)
+    chiffre_affaires_mois = sum(s.get("montant_ttc", 0) for s in month_sales)
+    
+    # Cash register status
+    register = await get_current_cash_register()
+    caisse_ouverte = register is not None
+    fond_caisse_actuel = register["fond_caisse"] + register.get("total_especes", 0) if register else 0
     
     return DashboardStats(
         total_products=total_products,
         total_clients=total_clients,
         total_suppliers=total_suppliers,
-        total_invoices=total_invoices,
+        total_sales=total_sales,
         chiffre_affaires_jour=chiffre_affaires_jour,
         chiffre_affaires_mois=chiffre_affaires_mois,
         products_low_stock=products_low_stock,
-        invoices_pending=invoices_pending
+        caisse_ouverte=caisse_ouverte,
+        fond_caisse_actuel=fond_caisse_actuel
     )
 
 @api_router.get("/dashboard/sales-chart")
 async def get_sales_chart():
     """Get sales data for the last 30 days"""
-    from datetime import timedelta
-    
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=30)
     
-    invoices = await db.invoices.find({
-        "date_facture": {"$gte": start_date.isoformat()},
-        "statut": {"$ne": "Annulée"}
+    sales = await db.sales.find({
+        "date_vente": {"$gte": start_date.isoformat()},
+        "annulee": False
     }, {"_id": 0}).to_list(1000)
     
-    # Group by date
     sales_by_date = {}
-    for inv in invoices:
-        date_str = inv["date_facture"][:10]  # Get just the date part
+    for s in sales:
+        date_str = s["date_vente"][:10]
         if date_str not in sales_by_date:
             sales_by_date[date_str] = 0
-        sales_by_date[date_str] += inv.get("montant_ttc", 0)
+        sales_by_date[date_str] += s.get("montant_ttc", 0)
     
-    # Create chart data
     chart_data = [{"date": date, "montant": amount} for date, amount in sorted(sales_by_date.items())]
     
     return chart_data
@@ -842,11 +1005,11 @@ async def get_sales_chart():
 @api_router.get("/dashboard/top-products")
 async def get_top_products():
     """Get top selling products"""
-    invoices = await db.invoices.find({"statut": {"$ne": "Annulée"}}, {"_id": 0}).to_list(1000)
+    sales = await db.sales.find({"annulee": False}, {"_id": 0}).to_list(1000)
     
     product_sales = {}
-    for inv in invoices:
-        for ligne in inv.get("lignes", []):
+    for s in sales:
+        for ligne in s.get("lignes", []):
             pid = ligne["product_id"]
             if pid not in product_sales:
                 product_sales[pid] = {
@@ -858,7 +1021,6 @@ async def get_top_products():
             product_sales[pid]["quantite_vendue"] += ligne["quantite"]
             product_sales[pid]["montant_total"] += ligne["montant_ttc"]
     
-    # Sort by quantity sold
     top_products = sorted(product_sales.values(), key=lambda x: x["quantite_vendue"], reverse=True)[:10]
     
     return top_products
@@ -867,138 +1029,83 @@ async def get_top_products():
 
 @api_router.get("/export/products")
 async def export_products():
-    """Export products to CSV"""
     import csv
-    
     products = await db.products.find({}, {"_id": 0}).to_list(10000)
     
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';')
-    
-    # Header
-    writer.writerow([
-        "Code", "Code Barre", "Désignation", "Catégorie", 
-        "Prix Achat", "Prix Vente", "Stock", "Stock Minimum", "Unité", "TVA"
-    ])
+    writer.writerow(["Code", "Code Barre", "Désignation", "Catégorie", "Prix Achat", "Prix Vente", "Stock", "Stock Minimum", "Unité", "TVA"])
     
     for p in products:
         writer.writerow([
-            p.get("code", ""),
-            p.get("code_barre", ""),
-            p.get("designation", ""),
-            p.get("categorie", ""),
-            p.get("prix_achat", 0),
-            p.get("prix_vente", 0),
-            p.get("quantite_stock", 0),
-            p.get("stock_minimum", 0),
-            p.get("unite", ""),
-            p.get("tva", 0)
+            p.get("code", ""), p.get("code_barre", ""), p.get("designation", ""),
+            p.get("categorie", ""), p.get("prix_achat", 0), p.get("prix_vente", 0),
+            p.get("quantite_stock", 0), p.get("stock_minimum", 0), p.get("unite", ""), p.get("tva", 0)
         ])
     
     output.seek(0)
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=produits.csv"}
-    )
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=produits.csv"})
 
 @api_router.get("/export/clients")
 async def export_clients():
-    """Export clients to CSV"""
     import csv
-    
     clients = await db.clients.find({}, {"_id": 0}).to_list(10000)
     
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';')
-    
     writer.writerow(["Code", "Nom", "Téléphone", "Email", "Adresse", "Ville", "Solde"])
     
     for c in clients:
         writer.writerow([
-            c.get("code", ""),
-            c.get("nom", ""),
-            c.get("telephone", ""),
-            c.get("email", ""),
-            c.get("adresse", ""),
-            c.get("ville", ""),
-            c.get("solde", 0)
+            c.get("code", ""), c.get("nom", ""), c.get("telephone", ""),
+            c.get("email", ""), c.get("adresse", ""), c.get("ville", ""), c.get("solde", 0)
         ])
     
     output.seek(0)
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=clients.csv"}
-    )
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=clients.csv"})
 
-@api_router.get("/export/invoices")
-async def export_invoices():
-    """Export invoices to CSV"""
+@api_router.get("/export/sales")
+async def export_sales():
     import csv
-    
-    invoices = await db.invoices.find({}, {"_id": 0}).to_list(10000)
+    sales = await db.sales.find({}, {"_id": 0}).to_list(10000)
     
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';')
+    writer.writerow(["Ticket", "Date", "Client", "Montant HT", "TVA", "Montant TTC", "Mode Paiement", "Annulée"])
     
-    writer.writerow([
-        "Numéro", "Date", "Client", "Montant HT", "TVA", "Montant TTC", "Statut", "Mode Paiement"
-    ])
-    
-    for inv in invoices:
+    for s in sales:
         writer.writerow([
-            inv.get("numero", ""),
-            inv.get("date_facture", "")[:10] if inv.get("date_facture") else "",
-            inv.get("client_nom", ""),
-            inv.get("montant_ht", 0),
-            inv.get("montant_tva", 0),
-            inv.get("montant_ttc", 0),
-            inv.get("statut", ""),
-            inv.get("mode_paiement", "")
+            s.get("numero_ticket", ""), s.get("date_vente", "")[:19] if s.get("date_vente") else "",
+            s.get("client_nom", ""), s.get("montant_ht", 0), s.get("montant_tva", 0),
+            s.get("montant_ttc", 0), s.get("mode_paiement", ""), "Oui" if s.get("annulee") else "Non"
         ])
     
     output.seek(0)
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=factures.csv"}
-    )
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=ventes.csv"})
 
 @api_router.get("/export/stock-movements")
 async def export_stock_movements():
-    """Export stock movements to CSV"""
     import csv
-    
     movements = await db.stock_movements.find({}, {"_id": 0}).to_list(10000)
     
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';')
-    
-    writer.writerow([
-        "Date", "Code Produit", "Désignation", "Type", 
-        "Quantité", "Stock Avant", "Stock Après", "Référence", "Motif"
-    ])
+    writer.writerow(["Date", "Code Produit", "Désignation", "Type", "Quantité", "Stock Avant", "Stock Après", "Référence", "Motif"])
     
     for m in movements:
         writer.writerow([
-            m.get("created_at", "")[:10] if m.get("created_at") else "",
-            m.get("product_code", ""),
-            m.get("designation", ""),
-            m.get("type_mouvement", ""),
-            m.get("quantite", 0),
-            m.get("quantite_avant", 0),
-            m.get("quantite_apres", 0),
-            m.get("reference", ""),
-            m.get("motif", "")
+            m.get("created_at", "")[:19] if m.get("created_at") else "",
+            m.get("product_code", ""), m.get("designation", ""), m.get("type_mouvement", ""),
+            m.get("quantite", 0), m.get("quantite_avant", 0), m.get("quantite_apres", 0),
+            m.get("reference", ""), m.get("motif", "")
         ])
     
     output.seek(0)
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=mouvements_stock.csv"}
-    )
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=mouvements_stock.csv"})
 
 # Include the router in the main app
 app.include_router(api_router)
