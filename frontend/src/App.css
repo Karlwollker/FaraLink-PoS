@@ -519,10 +519,10 @@ body {
 
 .data-table th {
   background: var(--bg-tertiary);
-  padding: 16px 20px;
+  padding: 10px 14px;
   text-align: left;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -530,10 +530,10 @@ body {
 }
 
 .data-table td {
-  padding: 16px 20px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-primary);
-  font-size: 0.95rem;
+  font-size: 0.85rem;
 }
 
 .data-table tr:last-child td {
@@ -546,6 +546,80 @@ body {
 
 .data-table tr.low-stock {
   background: rgba(220, 38, 38, 0.1);
+}
+
+/* Inline Price Editing */
+.editable-price-cell {
+  cursor: pointer;
+  position: relative;
+}
+
+.editable-price-cell:hover {
+  background: var(--bg-hover);
+}
+
+.price-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.price-display .edit-icon {
+  opacity: 0;
+  color: var(--text-muted);
+  transition: opacity 0.2s;
+}
+
+.editable-price-cell:hover .edit-icon {
+  opacity: 1;
+}
+
+.inline-edit-price {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inline-price-input {
+  width: 90px;
+  padding: 4px 6px;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.inline-price-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s;
+}
+
+.inline-price-btn.save {
+  background: var(--success);
+  color: white;
+}
+
+.inline-price-btn.save:hover {
+  opacity: 0.85;
+}
+
+.inline-price-btn.cancel {
+  background: var(--danger);
+  color: white;
+}
+
+.inline-price-btn.cancel:hover {
+  opacity: 0.85;
 }
 
 .action-buttons {
@@ -1680,28 +1754,30 @@ body {
 
 .pos-products-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
-  padding: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  grid-auto-rows: min-content;
+  gap: 8px;
+  padding: 10px;
   overflow-y: auto;
   flex: 1;
+  align-content: start;
 }
 
 .pos-product-card {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: 16px;
+  padding: 8px 10px;
   cursor: pointer;
   transition: all 0.2s;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 4px;
 }
 
 .pos-product-card:hover {
   border-color: var(--primary-light);
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   box-shadow: var(--shadow-md);
 }
 
@@ -1713,12 +1789,16 @@ body {
   display: block;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 4px;
-  font-size: 0.95rem;
+  margin-bottom: 2px;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pos-product-card .product-code {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   color: var(--text-muted);
 }
 
@@ -1731,10 +1811,11 @@ body {
 .pos-product-card .product-price {
   font-weight: 700;
   color: var(--primary-light);
+  font-size: 0.8rem;
 }
 
 .pos-product-card .product-stock {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   color: var(--text-muted);
 }
 

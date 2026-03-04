@@ -1077,6 +1077,9 @@ const ProductsModule = () => {
   const [showLowStock, setShowLowStock] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [editingPriceId, setEditingPriceId] = useState(null);
+  const [editingPriceField, setEditingPriceField] = useState(null);
+  const [editPriceValue, setEditPriceValue] = useState('');
   const [formData, setFormData] = useState({
     code: '', code_barre: '', designation: '', categorie: '',
     prix_achat: '', prix_vente: '', quantite_stock: 0, stock_minimum: 10,
@@ -1174,6 +1177,45 @@ const ProductsModule = () => {
     });
   };
 
+  const startEditPrice = (productId, field, currentValue) => {
+    setEditingPriceId(productId);
+    setEditingPriceField(field);
+    setEditPriceValue(String(currentValue));
+  };
+
+  const cancelEditPrice = () => {
+    setEditingPriceId(null);
+    setEditingPriceField(null);
+    setEditPriceValue('');
+  };
+
+  const savePrice = async (product) => {
+    const newPrice = parseFloat(editPriceValue);
+    if (isNaN(newPrice) || newPrice < 0) {
+      toast.error('Prix invalide');
+      return;
+    }
+    try {
+      const data = {
+        code: product.code,
+        code_barre: product.code_barre || '',
+        designation: product.designation,
+        categorie: product.categorie,
+        prix_achat: editingPriceField === 'prix_achat' ? newPrice : product.prix_achat,
+        prix_vente: editingPriceField === 'prix_vente' ? newPrice : product.prix_vente,
+        quantite_stock: product.quantite_stock,
+        stock_minimum: product.stock_minimum,
+        unite: product.unite
+      };
+      await axios.put(`${API_URL}/api/products/${product.id}`, data);
+      toast.success('Prix modifié');
+      cancelEditPrice();
+      fetchProducts();
+    } catch (error) {
+      toast.error('Erreur lors de la modification du prix');
+    }
+  };
+
   const exportProducts = () => {
     window.open(`${API_URL}/api/export/products`, '_blank');
   };
@@ -1244,8 +1286,46 @@ const ProductsModule = () => {
                 <td>{product.code}</td>
                 <td>{product.designation}</td>
                 <td>{product.categorie}</td>
-                <td>{formatCurrency(product.prix_achat)}</td>
-                <td>{formatCurrency(product.prix_vente)}</td>
+                <td className="editable-price-cell" onClick={() => startEditPrice(product.id, 'prix_achat', product.prix_achat)} data-testid={`edit-buy-price-${product.id}`}>
+                  {editingPriceId === product.id && editingPriceField === 'prix_achat' ? (
+                    <div className="inline-edit-price" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="number"
+                        value={editPriceValue}
+                        onChange={(e) => setEditPriceValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') savePrice(product); if (e.key === 'Escape') cancelEditPrice(); }}
+                        autoFocus
+                        min="0"
+                        className="inline-price-input"
+                        data-testid={`buy-price-input-${product.id}`}
+                      />
+                      <button className="inline-price-btn save" onClick={() => savePrice(product)} title="Enregistrer"><CheckCircle size={14} /></button>
+                      <button className="inline-price-btn cancel" onClick={cancelEditPrice} title="Annuler"><X size={14} /></button>
+                    </div>
+                  ) : (
+                    <span className="price-display">{formatCurrency(product.prix_achat)} <Edit size={12} className="edit-icon" /></span>
+                  )}
+                </td>
+                <td className="editable-price-cell" onClick={() => startEditPrice(product.id, 'prix_vente', product.prix_vente)} data-testid={`edit-sell-price-${product.id}`}>
+                  {editingPriceId === product.id && editingPriceField === 'prix_vente' ? (
+                    <div className="inline-edit-price" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="number"
+                        value={editPriceValue}
+                        onChange={(e) => setEditPriceValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') savePrice(product); if (e.key === 'Escape') cancelEditPrice(); }}
+                        autoFocus
+                        min="0"
+                        className="inline-price-input"
+                        data-testid={`sell-price-input-${product.id}`}
+                      />
+                      <button className="inline-price-btn save" onClick={() => savePrice(product)} title="Enregistrer"><CheckCircle size={14} /></button>
+                      <button className="inline-price-btn cancel" onClick={cancelEditPrice} title="Annuler"><X size={14} /></button>
+                    </div>
+                  ) : (
+                    <span className="price-display">{formatCurrency(product.prix_vente)} <Edit size={12} className="edit-icon" /></span>
+                  )}
+                </td>
                 <td>
                   <span className={`stock-badge ${product.quantite_stock <= product.stock_minimum ? 'low' : 'ok'}`}>
                     {product.quantite_stock}

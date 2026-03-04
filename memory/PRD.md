@@ -102,13 +102,16 @@ Création d'une application de gestion commerciale complète pour commerce de d�
 
 ### P1 (Important) - À considérer
 - [ ] Impression thermique ticket de caisse
-- [ ] Gestion des utilisateurs et droits d'accès
 - [ ] Bons de commande fournisseurs
 - [ ] Gestion des remises/promotions
+- [ ] PWA avec mode hors ligne complet
 
 ### P2 (Nice to have)
 - [ ] Lecteur code-barres physique
-- [ ] Application mobile
-- [ ] Mode hors-ligne
 - [ ] Tableau de bord avancé avec graphiques
 - [ ] Rapports de rentabilité
+
+## Historique des modifications
+- **4 Mars 2026**: Création initiale, migration VBA vers Web
+- **4 Mars 2026**: Ajout POS, Auth multi-rôles, Paramètres dynamiques
+- **4 Mars 2026**: Réduction taille affichage produits (POS + tableau), édition inline des prix
