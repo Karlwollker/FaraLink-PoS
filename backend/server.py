@@ -663,6 +663,60 @@ async def update_settings(input: AppSettingsUpdate):
     updated = await db.settings.find_one({"id": "app_settings"}, {"_id": 0})
     return deserialize_doc(updated)
 
+@api_router.post("/settings/reset-data")
+async def reset_data(data: dict):
+    """Reset selected data collections. Requires admin password confirmation."""
+    email = data.get("email", "")
+    password = data.get("password", "")
+    collections = data.get("collections", [])
+    
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email et mot de passe requis")
+    
+    if not collections:
+        raise HTTPException(status_code=400, detail="Sélectionnez au moins une donnée à réinitialiser")
+    
+    # Verify admin credentials
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Identifiants incorrects")
+    
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    if user.get("mot_de_passe") != password_hash:
+        raise HTTPException(status_code=401, detail="Mot de passe incorrect")
+    
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Seul un administrateur peut réinitialiser les données")
+    
+    valid_collections = {
+        "products": "products",
+        "clients": "clients",
+        "sales": "sales",
+        "suppliers": "suppliers",
+        "users": "users",
+        "categories": "categories",
+        "cash_registers": "cash_registers",
+    }
+    
+    reset_results = {}
+    for col_key in collections:
+        col_name = valid_collections.get(col_key)
+        if not col_name:
+            continue
+        
+        if col_key == "users":
+            # Keep the current admin, delete others
+            result = await db.users.delete_many({"email": {"$ne": email}})
+            reset_results[col_key] = result.deleted_count
+        else:
+            result = await db[col_name].delete_many({})
+            reset_results[col_key] = result.deleted_count
+    
+    return {
+        "message": "Réinitialisation effectuée",
+        "details": reset_results
+    }
+
 # ==================== PRODUCTS ====================
 
 @api_router.post("/products", response_model=Product)

@@ -106,6 +106,7 @@ Création d'une application de gestion commerciale complète pour commerce de d�
 - ✅ Import produits depuis fichier Excel (.xlsx) avec modèle téléchargeable
 - ✅ Gestion des catégories (CRUD) avec modal dédié
 - ✅ PWA complète : installable Android/iPhone, Service Worker, mode hors ligne, synchronisation
+- ✅ Bouton de réinitialisation sélective (Zone Danger dans Paramètres, confirmation par mot de passe Admin)
 
 ### P1 (Important) - À considérer
 - [ ] Impression thermique ticket de caisse

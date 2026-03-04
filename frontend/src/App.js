@@ -2648,6 +2648,7 @@ const UsersModule = () => {
 // ==================== SETTINGS MODULE ====================
 const SettingsModule = ({ onSettingsUpdate }) => {
   const settings = useSettings();
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     nom_boutique: '',
     slogan: '',
@@ -2662,6 +2663,18 @@ const SettingsModule = ({ onSettingsUpdate }) => {
     couleur_principale: '#1e40af'
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetSelections, setResetSelections] = useState({
+    products: false,
+    clients: false,
+    sales: false,
+    suppliers: false,
+    users: false,
+    categories: false,
+    cash_registers: false,
+  });
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     if (settings) {
@@ -2695,6 +2708,52 @@ const SettingsModule = ({ onSettingsUpdate }) => {
       toast.error('Erreur lors de l\'enregistrement');
     }
     setIsSaving(false);
+  };
+
+  const toggleResetSelection = (key) => {
+    setResetSelections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const selectAllReset = () => {
+    const allSelected = Object.values(resetSelections).every(v => v);
+    const newVal = !allSelected;
+    setResetSelections({
+      products: newVal, clients: newVal, sales: newVal,
+      suppliers: newVal, users: newVal, categories: newVal, cash_registers: newVal,
+    });
+  };
+
+  const handleReset = async () => {
+    const selected = Object.entries(resetSelections).filter(([, v]) => v).map(([k]) => k);
+    if (selected.length === 0) {
+      toast.error('Sélectionnez au moins une donnée à réinitialiser');
+      return;
+    }
+    if (!resetPassword) {
+      toast.error('Entrez votre mot de passe pour confirmer');
+      return;
+    }
+    setIsResetting(true);
+    try {
+      const res = await axios.post(`${API_URL}/api/settings/reset-data`, {
+        email: user?.email,
+        password: resetPassword,
+        collections: selected
+      });
+      toast.success(res.data.message);
+      const details = res.data.details;
+      const summary = Object.entries(details).map(([k, v]) => `${k}: ${v}`).join(', ');
+      if (summary) toast.info(`Supprimés: ${summary}`);
+      setShowResetModal(false);
+      setResetPassword('');
+      setResetSelections({
+        products: false, clients: false, sales: false,
+        suppliers: false, users: false, categories: false, cash_registers: false,
+      });
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur lors de la réinitialisation');
+    }
+    setIsResetting(false);
   };
 
   const devises = ['FCFA', 'XAF', 'EUR', 'USD', 'GBP', 'MAD', 'XOF'];
@@ -2875,6 +2934,89 @@ const SettingsModule = ({ onSettingsUpdate }) => {
           </button>
         </div>
       </form>
+
+      {/* Zone Danger */}
+      <div className="settings-section danger-zone">
+        <h3><AlertTriangle size={18} /> Zone Danger</h3>
+        <p className="danger-zone-desc">Réinitialisez les données de votre application. Cette action est irréversible.</p>
+        <button
+          className="btn btn-danger"
+          onClick={() => setShowResetModal(true)}
+          data-testid="open-reset-btn"
+        >
+          <Trash2 size={18} /> Réinitialiser les données
+        </button>
+      </div>
+
+      {/* Reset Modal */}
+      {showResetModal && (
+        <div className="modal-overlay" onClick={() => setShowResetModal(false)}>
+          <div className="modal reset-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header danger-header">
+              <h3><AlertTriangle size={20} /> Réinitialisation des données</h3>
+              <button className="btn-close" onClick={() => setShowResetModal(false)}><X /></button>
+            </div>
+            <div className="modal-form">
+              <p className="reset-warning">
+                Cette action supprimera définitivement les données sélectionnées. Elle est <strong>irréversible</strong>.
+              </p>
+
+              <div className="reset-select-header">
+                <span>Sélectionnez les données à supprimer :</span>
+                <button className="btn-link" onClick={selectAllReset} data-testid="select-all-reset">
+                  {Object.values(resetSelections).every(v => v) ? 'Tout désélectionner' : 'Tout sélectionner'}
+                </button>
+              </div>
+
+              <div className="reset-checkboxes">
+                {[
+                  { key: 'products', label: 'Produits', icon: <Package size={16} /> },
+                  { key: 'categories', label: 'Catégories', icon: <Tag size={16} /> },
+                  { key: 'clients', label: 'Clients', icon: <Users size={16} /> },
+                  { key: 'sales', label: 'Ventes & Chiffre d\'affaires', icon: <ShoppingCart size={16} /> },
+                  { key: 'cash_registers', label: 'Historique de caisse', icon: <Calculator size={16} /> },
+                  { key: 'suppliers', label: 'Fournisseurs', icon: <Truck size={16} /> },
+                  { key: 'users', label: 'Utilisateurs (sauf votre compte)', icon: <User size={16} /> },
+                ].map(item => (
+                  <label key={item.key} className={`reset-checkbox ${resetSelections[item.key] ? 'checked' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={resetSelections[item.key]}
+                      onChange={() => toggleResetSelection(item.key)}
+                      data-testid={`reset-${item.key}`}
+                    />
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+
+              <div className="reset-confirm-section">
+                <label><Lock size={16} /> Confirmez avec votre mot de passe Admin</label>
+                <input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  placeholder="Mot de passe administrateur"
+                  data-testid="reset-password-input"
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button className="btn btn-secondary" onClick={() => setShowResetModal(false)}>Annuler</button>
+                <button
+                  className="btn btn-danger"
+                  onClick={handleReset}
+                  disabled={isResetting || !resetPassword || !Object.values(resetSelections).some(v => v)}
+                  data-testid="confirm-reset-btn"
+                >
+                  {isResetting ? <><RefreshCw size={16} className="spin" /> Suppression...</> : <><Trash2 size={16} /> Supprimer définitivement</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
