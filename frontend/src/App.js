@@ -341,8 +341,6 @@ const POSModule = () => {
   };
 
   const cartTotal = cart.reduce((sum, item) => sum + (item.prix_unitaire * item.quantite), 0);
-  const cartTVA = cartTotal * 0.18;
-  const cartTTC = cartTotal + cartTVA;
 
   const handleBarcodeScan = async (e) => {
     if (e.key === 'Enter' && searchQuery) {
@@ -363,7 +361,7 @@ const POSModule = () => {
     }
 
     const received = parseFloat(amountReceived) || 0;
-    if (paymentMethod === 'Espèces' && received < cartTTC) {
+    if (paymentMethod === 'Espèces' && received < cartTotal) {
       toast.error('Montant reçu insuffisant');
       return;
     }
@@ -375,7 +373,7 @@ const POSModule = () => {
           product_id: item.product_id,
           quantite: item.quantite
         })),
-        montant_recu: received || cartTTC,
+        montant_recu: received || cartTotal,
         mode_paiement: paymentMethod
       });
       
@@ -392,7 +390,7 @@ const POSModule = () => {
     }
   };
 
-  const change = (parseFloat(amountReceived) || 0) - cartTTC;
+  const change = (parseFloat(amountReceived) || 0) - cartTotal;
 
   // Check if cash register is closed
   if (!cashRegister?.caisse_ouverte) {
@@ -583,17 +581,9 @@ const POSModule = () => {
           </div>
 
           <div className="cart-summary">
-            <div className="summary-row">
-              <span>Sous-total HT</span>
-              <span>{formatCurrency(cartTotal)}</span>
-            </div>
-            <div className="summary-row">
-              <span>TVA (18%)</span>
-              <span>{formatCurrency(cartTVA)}</span>
-            </div>
             <div className="summary-row total">
-              <span>Total TTC</span>
-              <span>{formatCurrency(cartTTC)}</span>
+              <span>Total HT</span>
+              <span>{formatCurrency(cartTotal)}</span>
             </div>
           </div>
 
@@ -603,7 +593,7 @@ const POSModule = () => {
             disabled={cart.length === 0}
             data-testid="pay-btn"
           >
-            <Banknote size={20} /> Payer {formatCurrency(cartTTC)}
+            <Banknote size={20} /> Payer {formatCurrency(cartTotal)}
           </button>
         </div>
       </div>
@@ -619,7 +609,7 @@ const POSModule = () => {
             <div className="payment-content">
               <div className="payment-total">
                 <span>Total à payer</span>
-                <span className="total-amount">{formatCurrency(cartTTC)}</span>
+                <span className="total-amount">{formatCurrency(cartTotal)}</span>
               </div>
 
               <div className="payment-methods">
@@ -672,7 +662,7 @@ const POSModule = () => {
                     ))}
                     <button
                       className="quick-amount-btn exact"
-                      onClick={() => setAmountReceived(Math.ceil(cartTTC).toString())}
+                      onClick={() => setAmountReceived(Math.ceil(cartTotal).toString())}
                     >
                       Exact
                     </button>
@@ -718,23 +708,15 @@ const POSModule = () => {
                   <div key={i} className="receipt-item">
                     <div className="receipt-item-name">{ligne.designation}</div>
                     <div className="receipt-item-detail">
-                      {ligne.quantite} x {formatCurrency(ligne.prix_unitaire)} = {formatCurrency(ligne.montant_ttc)}
+                      {ligne.quantite} x {formatCurrency(ligne.prix_unitaire)} = {formatCurrency(ligne.montant_ht)}
                     </div>
                   </div>
                 ))}
               </div>
               <div className="receipt-totals">
-                <div className="receipt-row">
+                <div className="receipt-row total">
                   <span>Total HT:</span>
                   <span>{formatCurrency(lastSale.montant_ht)}</span>
-                </div>
-                <div className="receipt-row">
-                  <span>TVA:</span>
-                  <span>{formatCurrency(lastSale.montant_tva)}</span>
-                </div>
-                <div className="receipt-row total">
-                  <span>Total TTC:</span>
-                  <span>{formatCurrency(lastSale.montant_ttc)}</span>
                 </div>
                 <div className="receipt-row">
                   <span>Payé ({lastSale.mode_paiement}):</span>
@@ -827,7 +809,7 @@ const ProductsModule = () => {
   const [formData, setFormData] = useState({
     code: '', code_barre: '', designation: '', categorie: '',
     prix_achat: '', prix_vente: '', quantite_stock: 0, stock_minimum: 10,
-    unite: 'Pièce', tva: 18
+    unite: 'Pièce'
   });
 
   const fetchProducts = useCallback(async () => {
@@ -866,8 +848,7 @@ const ProductsModule = () => {
         prix_achat: parseFloat(formData.prix_achat),
         prix_vente: parseFloat(formData.prix_vente),
         quantite_stock: parseInt(formData.quantite_stock),
-        stock_minimum: parseInt(formData.stock_minimum),
-        tva: parseFloat(formData.tva)
+        stock_minimum: parseInt(formData.stock_minimum)
       };
 
       if (editingProduct) {
@@ -908,8 +889,7 @@ const ProductsModule = () => {
       prix_vente: product.prix_vente,
       quantite_stock: product.quantite_stock,
       stock_minimum: product.stock_minimum,
-      unite: product.unite,
-      tva: product.tva
+      unite: product.unite
     });
     setShowModal(true);
   };
@@ -919,7 +899,7 @@ const ProductsModule = () => {
     setFormData({
       code: '', code_barre: '', designation: '', categorie: '',
       prix_achat: '', prix_vente: '', quantite_stock: 0, stock_minimum: 10,
-      unite: 'Pièce', tva: 18
+      unite: 'Pièce'
     });
   };
 
@@ -1076,10 +1056,6 @@ const ProductsModule = () => {
                 <div className="form-group">
                   <label>Stock Minimum</label>
                   <input type="number" value={formData.stock_minimum} onChange={(e) => setFormData({...formData, stock_minimum: e.target.value})} min="0" data-testid="product-min-stock-input" />
-                </div>
-                <div className="form-group">
-                  <label>TVA (%)</label>
-                  <input type="number" value={formData.tva} onChange={(e) => setFormData({...formData, tva: e.target.value})} min="0" max="100" data-testid="product-tva-input" />
                 </div>
               </div>
               <div className="modal-actions">

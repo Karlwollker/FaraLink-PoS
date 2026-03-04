@@ -48,7 +48,7 @@ class Product(BaseModel):
     quantite_stock: int = 0
     stock_minimum: int = 10
     unite: str = "Pièce"
-    tva: float = 18.0
+    tva: float = 0.0  # TVA désactivée
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -62,7 +62,7 @@ class ProductCreate(BaseModel):
     quantite_stock: int = 0
     stock_minimum: int = 10
     unite: str = "Pièce"
-    tva: float = 18.0
+    tva: float = 0.0  # TVA désactivée
 
 class ProductUpdate(BaseModel):
     code: Optional[str] = None
