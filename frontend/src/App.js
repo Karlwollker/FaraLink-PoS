@@ -9,8 +9,10 @@ import {
   Smartphone, Receipt, DollarSign, XCircle, Calculator,
   RefreshCw, Printer, Settings, Save, Store, Phone, Mail,
   Globe, Palette, Percent, LogOut, User, Lock, UserPlus,
-  Shield, Monitor, Tablet, Wifi, Upload, Tag, FileSpreadsheet
+  Shield, Monitor, Tablet, Wifi, Upload, Tag, FileSpreadsheet,
+  WifiOff, CloudOff, Cloud
 } from 'lucide-react';
+import { saveOfflineSale, getOfflineSales, deleteOfflineSale, cacheProducts, getCachedProducts, cacheClients, getCachedClients, getOfflineSalesCount } from './offlineDB';
 import './App.css';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
@@ -477,8 +479,24 @@ const POSModule = () => {
       setCategories(categoriesRes.data);
       setClients(clientsRes.data);
       setCashRegister(registerRes.data);
+      // Cache for offline use
+      cacheProducts(productsRes.data).catch(() => {});
+      cacheClients(clientsRes.data).catch(() => {});
     } catch (error) {
-      toast.error('Erreur lors du chargement');
+      // If offline, try to load from cache
+      if (!navigator.onLine) {
+        try {
+          const cachedProds = await getCachedProducts();
+          const cachedClis = await getCachedClients();
+          if (cachedProds.length > 0) setProducts(cachedProds);
+          if (cachedClis.length > 0) setClients(cachedClis);
+          toast.info('Données chargées depuis le cache hors ligne');
+        } catch (e) {
+          toast.error('Aucune donnée en cache disponible');
+        }
+      } else {
+        toast.error('Erreur lors du chargement');
+      }
     }
   };
 
@@ -658,17 +676,34 @@ const POSModule = () => {
       return;
     }
 
+    const salePayload = {
+      client_id: selectedClient?.id || null,
+      lignes: cart.map(item => ({
+        product_id: item.product_id,
+        quantite: item.quantite,
+        prix_unitaire: item.prix_unitaire
+      })),
+      montant_recu: received || totalToPay,
+      mode_paiement: paymentMethod
+    };
+
+    if (!navigator.onLine) {
+      // Offline mode: save to IndexedDB
+      try {
+        await saveOfflineSale(salePayload);
+        setShowPayment(false);
+        clearCart();
+        setAmountReceived('');
+        setPaymentMethod('Espèces');
+        toast.success('Vente sauvegardée hors ligne (sera synchronisée au retour de la connexion)');
+      } catch (err) {
+        toast.error('Erreur sauvegarde hors ligne');
+      }
+      return;
+    }
+
     try {
-      const res = await axios.post(`${API_URL}/api/pos/sale`, {
-        client_id: selectedClient?.id || null,
-        lignes: cart.map(item => ({
-          product_id: item.product_id,
-          quantite: item.quantite,
-          prix_unitaire: item.prix_unitaire
-        })),
-        montant_recu: received || totalToPay,
-        mode_paiement: paymentMethod
-      });
+      const res = await axios.post(`${API_URL}/api/pos/sale`, salePayload);
       
       setLastSale(res.data);
       setShowPayment(false);
@@ -679,7 +714,21 @@ const POSModule = () => {
       fetchInitialData();
       toast.success('Vente enregistrée !');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Erreur lors de la vente');
+      // If network error, save offline
+      if (!error.response) {
+        try {
+          await saveOfflineSale(salePayload);
+          setShowPayment(false);
+          clearCart();
+          setAmountReceived('');
+          setPaymentMethod('Espèces');
+          toast.warning('Connexion perdue. Vente sauvegardée hors ligne.');
+        } catch (err) {
+          toast.error('Erreur lors de la sauvegarde');
+        }
+      } else {
+        toast.error(error.response?.data?.detail || 'Erreur lors de la vente');
+      }
     }
   };
 
@@ -2838,6 +2887,91 @@ function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [offlineSalesCount, setOfflineSalesCount] = useState(0);
+
+  useEffect(() => {
+    // Online/Offline detection
+    const handleOnline = () => { setIsOnline(true); toast.success('Connexion rétablie'); syncOfflineData(); };
+    const handleOffline = () => { setIsOnline(false); toast.warning('Mode hors ligne activé'); };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // PWA Install prompt
+    const handleBeforeInstall = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      const dismissed = localStorage.getItem('pwa-install-dismissed');
+      if (!dismissed) setShowInstallBanner(true);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+
+    // Sync offline data listener
+    window.addEventListener('sync-offline-data', syncOfflineData);
+
+    // Check offline sales count
+    updateOfflineSalesCount();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('sync-offline-data', syncOfflineData);
+    };
+  }, []);
+
+  const updateOfflineSalesCount = async () => {
+    try {
+      const count = await getOfflineSalesCount();
+      setOfflineSalesCount(count);
+    } catch (e) { /* IndexedDB not available */ }
+  };
+
+  const syncOfflineData = async () => {
+    try {
+      const offlineSales = await getOfflineSales();
+      const unsyncedSales = offlineSales.filter(s => !s.synced);
+      if (unsyncedSales.length === 0) return;
+
+      let synced = 0;
+      for (const sale of unsyncedSales) {
+        try {
+          await axios.post(`${API_URL}/api/pos/sale`, {
+            client_id: sale.client_id || null,
+            lignes: sale.lignes,
+            montant_recu: sale.montant_recu,
+            mode_paiement: sale.mode_paiement
+          });
+          await deleteOfflineSale(sale.id);
+          synced++;
+        } catch (err) {
+          console.error('Sync error for sale:', sale.id, err);
+        }
+      }
+      if (synced > 0) {
+        toast.success(`${synced} vente(s) hors ligne synchronisée(s)`);
+        updateOfflineSalesCount();
+      }
+    } catch (e) { console.error('Sync error:', e); }
+  };
+
+  const handleInstallPWA = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      toast.success('FaraLink installé !');
+    }
+    setDeferredPrompt(null);
+    setShowInstallBanner(false);
+  };
+
+  const dismissInstallBanner = () => {
+    setShowInstallBanner(false);
+    localStorage.setItem('pwa-install-dismissed', 'true');
+  };
 
   useEffect(() => {
     // Check for existing session
@@ -2960,6 +3094,31 @@ function App() {
         <div className="app">
           <Toaster position="top-right" richColors />
           <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} data-testid="mobile-menu-btn"><Menu /></button>
+          
+          {/* Offline indicator */}
+          {!isOnline && (
+            <div className="offline-banner" data-testid="offline-banner">
+              <WifiOff size={16} /> Mode hors ligne
+              {offlineSalesCount > 0 && <span className="offline-count">{offlineSalesCount} vente(s) en attente</span>}
+            </div>
+          )}
+
+          {/* PWA Install Banner */}
+          {showInstallBanner && (
+            <div className="install-banner" data-testid="install-banner">
+              <div className="install-banner-content">
+                <Smartphone size={20} />
+                <span>Installez FaraLink sur votre appareil</span>
+              </div>
+              <div className="install-banner-actions">
+                <button className="btn btn-primary btn-sm" onClick={handleInstallPWA} data-testid="install-btn">
+                  <Download size={16} /> Installer
+                </button>
+                <button className="btn-close-banner" onClick={dismissInstallBanner}><X size={16} /></button>
+              </div>
+            </div>
+          )}
+
           <Sidebar 
             activeModule={activeModule} 
             setActiveModule={setActiveModule} 
