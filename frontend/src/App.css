@@ -380,6 +380,24 @@ body {
   box-shadow: var(--shadow-md);
 }
 
+.btn-primary:disabled,
+.btn-primary[disabled] {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+.btn-validate-payment {
+  width: 100%;
+  margin-top: 12px;
+  padding: 16px;
+  font-size: 1.1rem;
+  justify-content: center;
+}
+
 .btn-secondary {
   background: var(--bg-tertiary);
   color: var(--text-primary);

@@ -1014,13 +1014,21 @@ const POSModule = () => {
                 </div>
               )}
 
+              {paymentMethod === 'Espèces' && !amountReceived && (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', marginTop: '8px' }}>
+                  Entrez le montant reçu du client ou cliquez sur "Exact"
+                </p>
+              )}
+
               <button
-                className="btn btn-primary btn-large"
+                className="btn btn-primary btn-large btn-validate-payment"
                 onClick={processPayment}
-                disabled={paymentMethod === 'Espèces' && change < 0}
+                disabled={paymentMethod === 'Espèces' && (!amountReceived || change < 0)}
                 data-testid="confirm-payment-btn"
               >
-                <CheckCircle size={20} /> Valider le Paiement
+                <CheckCircle size={20} /> {paymentMethod === 'Espèces' && (!amountReceived || change < 0)
+                  ? 'Entrez le montant reçu'
+                  : 'Valider le Paiement'}
               </button>
             </div>
           </div>
