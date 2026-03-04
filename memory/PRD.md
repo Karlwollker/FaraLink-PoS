@@ -102,6 +102,7 @@ Création d'une application de gestion commerciale complète pour commerce de d�
 - ✅ Modification des prix inline (tableau + POS)
 - ✅ Ajout rapide de client depuis le POS
 - ✅ Validation de vente complète avec ticket
+- ✅ Application responsive (mobile 375px, tablette 768px, desktop 1920px)
 
 ### P1 (Important) - À considérer
 - [ ] Impression thermique ticket de caisse
